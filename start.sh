@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
-echo "║       ProERP Web — Starting...       ║"
+echo "║    Maktaba Print Web - Starting...   ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -30,7 +30,7 @@ npm run dev &
 FRONTEND_PID=$!
 
 echo ""
-echo "✅ ProERP Web is running!"
+echo "Maktaba Print Web is running!"
 echo ""
 echo "  🌐 App:    http://localhost:5173"
 echo "  📡 API:    http://localhost:8000"

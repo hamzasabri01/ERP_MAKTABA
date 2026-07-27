@@ -299,8 +299,8 @@ export default function Layout() {
     return (
       <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
-          <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt="ProERP" />
-          <span className="logo-text">{visualSettings.app_name || 'ProERP'}</span>
+          <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt="Maktaba Print" />
+          <span className="logo-text">{visualSettings.app_name || 'Maktaba Print'}</span>
         </div>
 
         <nav className="sidebar-nav">

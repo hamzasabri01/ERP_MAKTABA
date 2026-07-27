@@ -677,7 +677,7 @@ function buildSalesDocumentHtml(sale, settings) {
   <section class="parties"><div><h2>Client</h2><b>${escapeHtml(sale.client_name || 'Client comptoir')}</b></div><div><h2>Paiement</h2><span>Mode: ${escapeHtml(paymentModeLabel(sale.payment_mode))}</span><span>Paye: ${fmt(sale.paid_amount)} ${currency}</span><span>Reste: ${fmt(sale.balance_due)} ${currency}</span></div></section>
   <table><thead><tr><th>Designation</th><th>Qte</th><th>PU HT</th><th>Remise</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table>
   <section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(sale.notes || settings.invoice_notes || 'Merci pour votre confiance.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(sale.subtotal)} ${currency}</b></p><p><span>TVA</span><b>${fmt(sale.tax_amount)} ${currency}</b></p><p class="total"><span>Total TTC</span><b>${fmt(sale.total_amount)} ${currency}</b></p></aside></section>
-  <footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(sale.created_by_name || 'ProERP Web')}</footer>
+  <footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(sale.created_by_name || 'Maktaba Print')}</footer>
 </main></body></html>`
 }
 
@@ -775,7 +775,7 @@ function PrintableSalesDocument({ sale, settings }) {
         </section>
 
         <footer className="print-footer">
-          <span>{settings.name || 'ProERP'} - Document généré par {sale.created_by_name || 'ProERP Web'}</span>
+          <span>{settings.name || 'Maktaba Print'} - Document généré par {sale.created_by_name || 'Maktaba Print'}</span>
         </footer>
       </div>
     </div>

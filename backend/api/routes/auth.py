@@ -331,9 +331,9 @@ def firebase_login(body: FirebaseLoginRequest, request: Request, response: Respo
     user = db.query(User).filter(func.lower(User.email) == email, User.is_active == True).first()
     if not user:
         _register_failure(db, "firebase", key)
-        log_action(db, None, "login_failed", "firebase_auth", email, "Compte Firebase sans utilisateur ProERP actif", after={"email": email}, request=request)
+        log_action(db, None, "login_failed", "firebase_auth", email, "Compte Firebase sans utilisateur Maktaba Print actif", after={"email": email}, request=request)
         db.commit()
-        raise HTTPException(status_code=403, detail="Compte Firebase valide, mais aucun utilisateur ProERP actif avec cet email")
+        raise HTTPException(status_code=403, detail="Compte Firebase valide, mais aucun utilisateur Maktaba Print actif avec cet email")
     if user.mfa_enabled:
         log_action(db, user, "mfa_required", "firebase_auth", user.id, "Deuxieme facteur requis apres Firebase", request=request)
         db.commit()

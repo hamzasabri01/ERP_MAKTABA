@@ -286,7 +286,7 @@ def _stock_value_detail(db: Session, limit: int = 120):
 
 
 def _render_report_html(settings: dict, req: ReportEmailRequest, start: date, end: date, data: dict):
-    company = html.escape(settings.get("name") or settings.get("store_name") or "ProERP")
+    company = html.escape(settings.get("name") or settings.get("store_name") or "Maktaba Print")
     currency = html.escape(settings.get("currency") or "MAD")
     summary_rows = [
         ("Chiffre d'affaires", data["summary"]["revenue"]),
@@ -313,7 +313,7 @@ def _render_report_html(settings: dict, req: ReportEmailRequest, start: date, en
     ) or "<tr><td colspan='3'>Aucune vente par categorie</td></tr>"
     return f"""<!doctype html>
 <html><body style="font-family:Arial,sans-serif;color:#111827">
-<h2>{html.escape(settings.get('report_email_subject_prefix') or 'Rapport ProERP')}</h2>
+<h2>{html.escape(settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print')}</h2>
 <p><strong>{company}</strong><br>Periode: {start.isoformat()} au {end.isoformat()}</p>
 <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #d1d5db">{rows}</table>
 {f"<p>Marge brute: <strong>{data['summary']['margin_pct']}%</strong> | Ventes: <strong>{data['summary']['sale_count']}</strong> | Achats: <strong>{data['summary']['purchase_count']}</strong></p>" if req.include_profit else ""}
@@ -346,7 +346,7 @@ def _send_report_from_settings(db: Session, settings: dict, period_type: str = N
         "cash": _cash_summary(db, start, end) if req.include_cash else {"cash_in": 0, "cash_out": 0, "net_cash": 0},
     }
     recipients = _csv_emails(req.recipients)
-    subject = f"{settings.get('report_email_subject_prefix') or 'Rapport ProERP'} - {start.isoformat()} / {end.isoformat()}"
+    subject = f"{settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print'} - {start.isoformat()} / {end.isoformat()}"
     html_body = _render_report_html(settings, req, start, end, data)
     _send_email(settings, recipients, subject, html_body)
     return {"recipients": recipients, "start": start, "end": end, "subject": subject}
@@ -388,7 +388,7 @@ def _send_email(settings: dict, to_emails: list[str], subject: str, html_body: s
         raise HTTPException(status_code=400, detail="Aucun destinataire configure")
 
     msg = EmailMessage()
-    from_name = settings.get("smtp_from_name") or settings.get("name") or "ProERP"
+    from_name = settings.get("smtp_from_name") or settings.get("name") or "Maktaba Print"
     msg["From"] = f"{from_name} <{settings.get('smtp_from_email')}>"
     msg["To"] = ", ".join(to_emails)
     cc = _csv_emails(settings.get("report_email_cc", ""))
@@ -398,7 +398,7 @@ def _send_email(settings: dict, to_emails: list[str], subject: str, html_body: s
     if settings.get("report_email_reply_to"):
         msg["Reply-To"] = settings["report_email_reply_to"]
     msg["Subject"] = subject
-    msg.set_content(text_body or "Rapport ProERP en HTML.")
+    msg.set_content(text_body or "Rapport Maktaba Print en HTML.")
     msg.add_alternative(html_body, subtype="html")
 
     timeout = int(settings.get("smtp_timeout_seconds") or 30)
@@ -553,7 +553,7 @@ def send_report_email(body: ReportEmailRequest, db: Session = Depends(get_db), u
         "stock": _stock_summary(db) if body.include_stock_value else {"total_value": 0, "products_count": 0, "low_stock_count": 0},
         "cash": _cash_summary(db, start, end) if body.include_cash else {"cash_in": 0, "cash_out": 0, "net_cash": 0},
     }
-    subject = body.subject or f"{settings.get('report_email_subject_prefix') or 'Rapport ProERP'} - {start.isoformat()} / {end.isoformat()}"
+    subject = body.subject or f"{settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print'} - {start.isoformat()} / {end.isoformat()}"
     html_body = _render_report_html(settings, body, start, end, data)
     _send_email(settings, recipients, subject, html_body)
 
@@ -567,7 +567,7 @@ def test_report_email(body: ReportEmailTestRequest, user=Depends(get_current_use
     settings = _load_settings()
     recipient = body.recipient or settings.get("smtp_from_email") or settings.get("report_email_recipients", "")
     recipients = _csv_emails(recipient)
-    subject = f"{settings.get('report_email_subject_prefix') or 'Rapport ProERP'} - Test SMTP"
-    html_body = "<p>Votre configuration email ProERP fonctionne correctement.</p>"
-    _send_email(settings, recipients, subject, html_body, "Votre configuration email ProERP fonctionne correctement.")
+    subject = f"{settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print'} - Test SMTP"
+    html_body = "<p>Votre configuration email Maktaba Print fonctionne correctement.</p>"
+    _send_email(settings, recipients, subject, html_body, "Votre configuration email Maktaba Print fonctionne correctement.")
     return {"ok": True, "recipients": recipients}

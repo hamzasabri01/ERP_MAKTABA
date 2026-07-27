@@ -185,7 +185,7 @@ def consume_recovery_code(stored_hashes: str, code: str) -> tuple[bool, str]:
     return False, json.dumps(hashes)
 
 
-def provisioning_uri(secret: str, username: str, issuer: str = "ProERP") -> str:
+def provisioning_uri(secret: str, username: str, issuer: str = "Maktaba Print") -> str:
     label = f"{issuer}:{username}"
     return f"otpauth://totp/{label}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
 

@@ -610,7 +610,7 @@ export default function SettingsPage() {
               {activeTab === 'app' && (
                 <div className="settings-grid">
                   <SettingsCard icon={Settings} title={t('settings.appTitle')} hint={t('settings.appHint')}>
-                    <Field label={t('settings.appName')} help={help('app_name')}><input {...F('app_name')} placeholder="ProERP" /></Field>
+                    <Field label={t('settings.appName')} help={help('app_name')}><input {...F('app_name')} placeholder="Maktaba Print" /></Field>
                     <Field label={t('settings.defaultLanguage')} help={help('app_language')}><select {...F('app_language')}>{languageOptions}</select></Field>
                     <Field label={t('settings.startPage')} help={help('default_route')}><select {...F('default_route')}>{routeOptions}</select></Field>
                     <Field label={t('settings.timezone')} help={help('timezone')}><input {...F('timezone')} placeholder="Africa/Casablanca" /></Field>
@@ -815,7 +815,7 @@ export default function SettingsPage() {
                     <Field label="CC" help={help('report_email_cc')}><input {...F('report_email_cc')} placeholder="optionnel" /></Field>
                     <Field label="BCC" help={help('report_email_bcc')}><input {...F('report_email_bcc')} placeholder="optionnel" /></Field>
                     <Field label="Reply-To" help={help('report_email_reply_to')}><input {...F('report_email_reply_to')} placeholder="support@exemple.com" /></Field>
-                    <Field label={t('settings.subjectPrefix')} help={help('report_email_subject_prefix')}><input {...F('report_email_subject_prefix')} placeholder="Rapport ProERP" /></Field>
+                    <Field label={t('settings.subjectPrefix')} help={help('report_email_subject_prefix')}><input {...F('report_email_subject_prefix')} placeholder="Rapport Maktaba Print" /></Field>
                     <div className="settings-check-grid">
                       <Toggle label={t('settings.profitLoss')} help={help('report_email_include_profit')} {...FB('report_email_include_profit')} />
                       <Toggle label={t('settings.salesByCategory')} help={help('report_email_include_sales_by_category')} {...FB('report_email_include_sales_by_category')} />
@@ -838,7 +838,7 @@ export default function SettingsPage() {
                       <span>La valeur est protegee cote serveur via la variable SMTP_PASSWORD et n'est jamais renvoyee au navigateur.</span>
                     </div>
                     <Field label={t('settings.fromEmail')} help={help('smtp_from_email')}><input {...F('smtp_from_email')} placeholder="noreply@exemple.com" /></Field>
-                    <Field label={t('settings.fromName')} help={help('smtp_from_name')}><input {...F('smtp_from_name')} placeholder="ProERP" /></Field>
+                    <Field label={t('settings.fromName')} help={help('smtp_from_name')}><input {...F('smtp_from_name')} placeholder="Maktaba Print" /></Field>
                     <Field label={t('settings.timeoutSeconds')} help={help('smtp_timeout_seconds')}><input type="number" min="5" {...FN('smtp_timeout_seconds')} /></Field>
                     <button className="btn btn-secondary" onClick={sendTestEmail} disabled={testingEmail || saving}>
                       {testingEmail ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Mail size={16} />}
@@ -878,7 +878,7 @@ export default function SettingsPage() {
                   <SettingsCard icon={DatabaseBackup} title="Sauvegarde locale" hint="Creez une copie complete de la base, des parametres et des images.">
                     <div className="settings-note">
                       <strong>Attention: archive non chiffree</strong>
-                      <span>La sauvegarde ZIP locale contient les donnees ERP. Utilisez la sauvegarde chiffree pour tout transfert ou stockage externe.</span>
+                      <span>La sauvegarde ZIP locale contient les donnees du magasin. Utilisez la sauvegarde chiffree pour tout transfert ou stockage externe.</span>
                     </div>
                     <div className="settings-backup-actions">
                       <button className="btn btn-primary" onClick={createBackup} disabled={backupBusy}>
@@ -1083,7 +1083,7 @@ function IdentityPreview({ settings }) {
           <img src={logoUrl} alt="" />
           <div>
             <strong>{getCompanyName(settings)}</strong>
-            <span>Interface ProERP</span>
+            <span>Interface Maktaba Print</span>
           </div>
         </div>
         <div className="identity-preview-actions">

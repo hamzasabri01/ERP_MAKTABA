@@ -1,5 +1,5 @@
 # ================================
-# ProERP Web - PRO Launcher
+# Maktaba Print Web - Launcher
 # ================================
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +19,7 @@ function Write-Warn($msg)  { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
 
 # ────────────────────────────────
 Write-Host "`n===============================" -ForegroundColor Blue
-Write-Host " ProERP WEB - PRO START" -ForegroundColor Blue
+Write-Host " MAKTABA PRINT WEB - START" -ForegroundColor Blue
 Write-Host "===============================`n" -ForegroundColor Blue
 
 # ===============================
@@ -113,7 +113,7 @@ Start-Process "http://localhost:5173"
 # Summary
 # ===============================
 Write-Host "`n===============================" -ForegroundColor Green
-Write-Host " ProERP RUNNING" -ForegroundColor Green
+Write-Host " MAKTABA PRINT RUNNING" -ForegroundColor Green
 Write-Host "===============================`n" -ForegroundColor Green
 
 Write-Host "Frontend : http://localhost:5173"

@@ -1,5 +1,5 @@
 """
-ProERP Web — FastAPI Backend
+Maktaba Print — FastAPI Backend
 Migrated from PyQt6 desktop application.
 """
 from __future__ import annotations
@@ -34,14 +34,14 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup backup check failed")
     reports.start_report_email_scheduler()
-    logger.info("SecureERP Cloud backend started")
+    logger.info("Maktaba Print backend started")
     yield
 
 
 app = FastAPI(
-    title="SecureERP Cloud API",
+    title="Maktaba Print API",
     version="1.0.0",
-    description="Professional ERP System — Web Edition",
+    description="Gestion commerciale pour librairie, fournitures scolaires, copie et impression",
     lifespan=lifespan,
 )
 

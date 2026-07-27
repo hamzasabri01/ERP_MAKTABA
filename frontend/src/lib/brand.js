@@ -8,5 +8,5 @@ export function getLogoUrl(settings = {}, fallback = DEFAULT_LOGO_URL) {
 }
 
 export function getCompanyName(settings = {}) {
-  return settings.name || settings.store_name || settings.app_name || 'ProERP'
+  return settings.name || settings.store_name || settings.app_name || 'Maktaba Print'
 }

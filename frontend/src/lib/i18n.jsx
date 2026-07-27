@@ -5,7 +5,7 @@ export const LANGUAGES = {
   ar: { label: 'Arabe', nativeLabel: 'العربية', dir: 'rtl', locale: 'ar-MA' },
 }
 
-const STORAGE_KEY = 'proerp_language'
+const STORAGE_KEY = 'maktaba_print_language'
 
 const messages = {
   fr: {
@@ -811,8 +811,8 @@ const domArabicMap = new Map(Object.entries({
   'PDF / Imprimer': 'PDF / طباعة',
   'Encaisser': 'استخلاص',
   'Merci pour votre confiance.': 'شكرا على ثقتكم.',
-  'Document genere par ProERP Web': 'مستند منشأ بواسطة ProERP Web',
-  'Document généré par ProERP Web': 'مستند منشأ بواسطة ProERP Web',
+  'Document genere par Maktaba Print': 'مستند منشأ بواسطة Maktaba Print',
+  'Document généré par Maktaba Print': 'مستند منشأ بواسطة Maktaba Print',
   'Rechercher...': 'بحث...',
   'Rechercher…': 'بحث...',
   'Aucun': 'لا شيء',

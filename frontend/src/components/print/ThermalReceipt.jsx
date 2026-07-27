@@ -93,7 +93,7 @@ export default function ThermalReceipt({ sale, settings = {}, language = 'fr', c
     <article className={`thermal-receipt ${className}`} dir={dir} lang={lang}>
       <header className="thermal-head">
         {logoUrl && <img src={logoUrl} alt="" />}
-        <strong>{company || 'ProERP'}</strong>
+        <strong>{company || 'Maktaba Print'}</strong>
         {(settings.address || settings.phone || settings.ice) && (
           <small>
             {settings.address && <span>{settings.address}</span>}

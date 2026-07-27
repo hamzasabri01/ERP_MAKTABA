@@ -578,7 +578,7 @@ export default function POSPage() {
             </div>
             <div className="modal-body">
               <div className="receipt-paper no-print">
-                <h2>ProERP</h2>
+                <h2>Maktaba Print</h2>
                 <p>{lastSale.number}</p>
                 <p>{new Date(lastSale.date_time).toLocaleString('fr-MA')}</p>
                 <p>Utilisateur: {lastSale.created_by_name || '-'}</p>

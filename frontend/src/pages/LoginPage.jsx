@@ -48,7 +48,7 @@ export default function LoginPage() {
   const apiBaseUrl = runtimeConfig.api_base_url
   const activeMode = firebaseReady ? mode : 'local'
   const usernameLabel = activeMode === 'firebase' ? 'Email Firebase' : "Nom d'utilisateur"
-  const usernamePlaceholder = activeMode === 'firebase' ? 'admin@proerp.local' : 'admin'
+  const usernamePlaceholder = activeMode === 'firebase' ? 'admin@maktaba.local' : 'admin'
   const usernameValue = activeMode === 'firebase' ? form.email : form.username
 
   const statusItems = useMemo(() => ([
@@ -65,7 +65,7 @@ export default function LoginPage() {
     {
       icon: <ShieldCheck size={18} />,
       title: 'Session securisee',
-      detail: 'Jeton local, permissions et roles ERP',
+      detail: 'Jeton local, permissions et roles magasin',
     },
   ]), [apiBaseUrl, firebaseConfig.projectId, firebaseReady])
 
@@ -125,7 +125,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       if (err.response?.status === 403) {
-        toast.error(err.response?.data?.detail || 'Utilisateur ProERP non autorise')
+        toast.error(err.response?.data?.detail || 'Utilisateur Maktaba Print non autorise')
       } else if (activeMode === 'firebase' && !err.response) {
         toast.error(firebaseAuthErrorMessage(err.message))
       } else if (!err.response) {
@@ -140,27 +140,27 @@ export default function LoginPage() {
 
   return (
     <main className="login-shell">
-      <section className="login-brand-panel" aria-label="ProERP security overview">
+      <section className="login-brand-panel" aria-label="Maktaba Print security overview">
         <div className="login-logo-lockup">
-          <img className="login-logo-mark" src="/brand/proerp-logo.svg" alt="ProERP" />
+          <img className="login-logo-mark" src="/brand/proerp-logo.svg" alt="Maktaba Print" />
           <div>
-            <p className="login-logo-title">ProERP</p>
-            <p className="login-logo-subtitle">Controle d'acces professionnel</p>
+            <p className="login-logo-title">Maktaba Print</p>
+            <p className="login-logo-subtitle">Librairie, copie et impression</p>
           </div>
         </div>
 
         <div className="login-brand-copy">
           <span className="login-kicker">
             <LockKeyhole size={15} />
-            Authentification hybride
+            Gestion locale securisee
           </span>
-          <h1>Acces ERP fiable, rapide et clair.</h1>
+          <h1>Ventes, stock et impressions au meme comptoir.</h1>
           <p>
-            Connexion locale pour garder la base de donnees sur votre serveur, avec une couche Firebase prete pour les comptes cloud.
+            Suivez les fournitures scolaires, les tickets POS, les factures, les services de photocopie et les impressions depuis une interface unique.
           </p>
           <div className="login-access-chips" aria-label="Etat de connexion">
-            <span><Wifi size={15} /> LAN ready</span>
-            <span><CheckCircle2 size={15} /> Roles controles</span>
+            <span><Wifi size={15} /> LAN pret</span>
+            <span><CheckCircle2 size={15} /> Stock controle</span>
           </div>
         </div>
 
@@ -214,7 +214,7 @@ export default function LoginPage() {
               onClick={() => setMode('local')}
             >
               <Server size={16} />
-              <span>Local ERP</span>
+              <span>Magasin local</span>
             </button>
             <button
               type="button"
@@ -296,7 +296,7 @@ export default function LoginPage() {
             )}
 
             <div className="login-helper-row">
-              <span>{mfaToken ? 'Le challenge MFA expire apres quelques minutes.' : activeMode === 'firebase' ? 'Firebase verifie le compte, ProERP garde les roles.' : import.meta.env.DEV ? 'Compte initial disponible uniquement en environnement local.' : 'Contactez votre administrateur pour obtenir un acces.'}</span>
+              <span>{mfaToken ? 'Le challenge MFA expire apres quelques minutes.' : activeMode === 'firebase' ? 'Firebase verifie le compte, Maktaba Print garde les roles.' : import.meta.env.DEV ? 'Compte initial disponible uniquement en environnement local.' : 'Contactez votre administrateur pour obtenir un acces.'}</span>
               {mfaToken && <button type="button" className="login-link-button" onClick={() => setMfaToken('')}>Retour</button>}
             </div>
 
