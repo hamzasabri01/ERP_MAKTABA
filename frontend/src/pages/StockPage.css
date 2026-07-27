@@ -1,0 +1,245 @@
+.stock-runtime-text {
+  color: var(--text2);
+  font-size: .85rem;
+  margin-top: .2rem;
+}
+
+.stock-runtime-text span {
+  margin-left: .6rem;
+  color: var(--accent);
+}
+
+.stock-live {
+  border-color: rgba(34,197,94,.45);
+  color: var(--success);
+}
+
+.stock-spin {
+  animation: spin .8s linear infinite;
+}
+
+.stock-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+.stock-reconciliation {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  padding: .75rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg2);
+}
+
+.stock-reconciliation.is-ok {
+  border-color: rgba(34,197,94,.35);
+  color: var(--success);
+}
+
+.stock-reconciliation.has-errors {
+  border-color: rgba(239,68,68,.4);
+  color: var(--danger);
+}
+
+.stock-reconciliation > div {
+  display: grid;
+  gap: .1rem;
+  flex: 1;
+}
+
+.stock-reconciliation span {
+  color: var(--text2);
+  font-size: .78rem;
+}
+
+.stock-reconciliation .stock-warehouse {
+  padding: .25rem .55rem;
+  border-radius: 999px;
+  background: var(--bg3);
+  white-space: nowrap;
+}
+
+.stock-filters {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  flex-wrap: wrap;
+}
+
+.stock-filters .search-wrap {
+  flex: 1 1 260px;
+}
+
+.stock-filters select {
+  width: auto;
+  min-width: 180px;
+}
+
+.stock-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  gap: 1rem;
+}
+
+.stock-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.stock-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.stock-panel-head > div {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  font-weight: 700;
+}
+
+.stock-panel-head span {
+  color: var(--text2);
+  font-size: .8rem;
+}
+
+.stock-table-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.stock-level {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .25rem;
+  margin-right: .35rem;
+}
+
+.stock-level span {
+  color: var(--text3);
+  font-size: .75rem;
+}
+
+.stock-movement-badge {
+  display: inline-flex;
+  padding: .18rem .5rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.stock-movement-badge.success { background: rgba(34,197,94,.13); color: var(--success); }
+.stock-movement-badge.danger { background: rgba(239,68,68,.13); color: var(--danger); }
+.stock-movement-badge.accent { background: rgba(79,142,247,.13); color: var(--accent); }
+.stock-movement-badge.warning { background: rgba(245,158,11,.13); color: var(--warning); }
+
+.stock-preview {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: .75rem;
+}
+
+.stock-preview > div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+  padding: .85rem;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.stock-preview span {
+  color: var(--text2);
+  font-size: .8rem;
+}
+
+.stock-inventory-modal .modal-body {
+  display: grid;
+  gap: .85rem;
+}
+
+.stock-inventory-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+
+.stock-inventory-toolbar .search-wrap {
+  flex: 1;
+}
+
+.stock-inventory-summary {
+  min-width: 145px;
+  padding: .55rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg3);
+  text-align: right;
+}
+
+.stock-inventory-summary span,
+.stock-inventory-summary strong {
+  display: block;
+}
+
+.stock-inventory-summary span {
+  color: var(--text2);
+  font-size: .74rem;
+}
+
+.stock-inventory-summary strong {
+  color: var(--accent);
+}
+
+.stock-inventory-table {
+  max-height: min(58vh, 560px);
+  overflow: auto;
+}
+
+.stock-inventory-table input {
+  width: 130px;
+}
+
+.stock-row-changed {
+  background: var(--accent-glow);
+}
+
+@media (max-width: 1100px) {
+  .stock-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .stock-filters select,
+  .stock-filters button {
+    width: 100%;
+  }
+
+  .stock-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-inventory-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stock-inventory-summary {
+    text-align: left;
+  }
+
+  .stock-reconciliation {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}

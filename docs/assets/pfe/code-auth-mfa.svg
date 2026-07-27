@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="906" viewBox="0 0 1400 906">
+<rect width="1400" height="906" fill="#0f172a"/>
+<rect x="40" y="40" width="1320" height="826" rx="18" fill="#111827" stroke="#334155"/>
+<text x="70" y="88" font-family="Arial" font-size="24" font-weight="700" fill="#e5e7eb">Extrait backend - login MFA</text>
+<text x="70" y="130" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">01</text>
+<text x="130" y="130" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        log_action(db, user, "mfa_required", "auth", user.id, "Deuxieme facteur requis", after={"username": user.usernam</text>
+<text x="70" y="158" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">02</text>
+<text x="130" y="158" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        db.commit()</text>
+<text x="70" y="186" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">03</text>
+<text x="130" y="186" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        return LoginResponse(mfa_required=True, mfa_token=create_mfa_token(user.id, user.username))</text>
+<text x="70" y="214" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">04</text>
+<text x="130" y="214" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="242" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">05</text>
+<text x="130" y="242" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    _clear_failed_logins(request, body.username)</text>
+<text x="70" y="270" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">06</text>
+<text x="130" y="270" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    user.last_login = datetime.utcnow()</text>
+<text x="70" y="298" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">07</text>
+<text x="130" y="298" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    log_action(db, user, "login_success", "auth", user.id, "Connexion reussie", after={"username": user.username}, reque</text>
+<text x="70" y="326" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">08</text>
+<text x="130" y="326" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    db.commit()</text>
+<text x="70" y="354" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">09</text>
+<text x="130" y="354" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    token = create_access_token({"sub": str(user.id), "username": user.username})</text>
+<text x="70" y="382" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">10</text>
+<text x="130" y="382" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    return LoginResponse(access_token=token, user=_user_out(user))</text>
+<text x="70" y="410" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">11</text>
+<text x="130" y="410" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="438" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">12</text>
+<text x="130" y="438" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="466" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">13</text>
+<text x="130" y="466" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">@router.post("/login/mfa", response_model=TokenResponse)</text>
+<text x="70" y="494" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">14</text>
+<text x="130" y="494" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">def login_mfa(body: MfaVerifyRequest, request: Request, db: Session = Depends(get_db)):</text>
+<text x="70" y="522" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">15</text>
+<text x="130" y="522" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    payload = decode_token(body.mfa_token)</text>
+<text x="70" y="550" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">16</text>
+<text x="130" y="550" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    if payload.get("token_use") != "mfa":</text>
+<text x="70" y="578" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">17</text>
+<text x="130" y="578" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        raise HTTPException(status_code=401, detail="Challenge MFA invalide")</text>
+<text x="70" y="606" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">18</text>
+<text x="130" y="606" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    user = db.query(User).filter(User.id == int(payload.get("sub", 0)), User.is_active == True).first()</text>
+<text x="70" y="634" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">19</text>
+<text x="130" y="634" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    if not user or not user.mfa_enabled or not verify_totp(user.mfa_secret or "", body.code):</text>
+<text x="70" y="662" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">20</text>
+<text x="130" y="662" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        log_action(db, user, "mfa_failed", "auth", payload.get("sub", ""), "Code MFA invalide", request=request)</text>
+<text x="70" y="690" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">21</text>
+<text x="130" y="690" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        db.commit()</text>
+<text x="70" y="718" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">22</text>
+<text x="130" y="718" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        raise HTTPException(status_code=401, detail="Code MFA invalide")</text>
+<text x="70" y="746" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">23</text>
+<text x="130" y="746" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    _clear_failed_logins(request, user.username)</text>
+<text x="70" y="774" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">24</text>
+<text x="130" y="774" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    user.last_login = datetime.utcnow()</text>
+<text x="70" y="802" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">25</text>
+<text x="130" y="802" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    log_action(db, user, "login_success", "auth", user.id, "Connexion MFA reussie", after={"username": user.username}, r</text>
+<text x="70" y="830" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">26</text>
+<text x="130" y="830" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    db.commit()</text>
+<text x="70" y="858" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">27</text>
+<text x="130" y="858" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    token = create_access_token({"sub": str(user.id), "username": user.username, "mfa": True})</text>
+</svg>

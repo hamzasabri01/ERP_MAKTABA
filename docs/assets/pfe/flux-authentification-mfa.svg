@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="850" viewBox="0 0 1400 850">
+<rect width="1400" height="850" fill="#f5f8fc"/>
+<text x="60" y="70" font-family="Arial" font-size="34" font-weight="700" fill="#172033">Flux d'authentification MFA/TOTP</text>
+<text x="60" y="110" font-family="Arial" font-size="18" fill="#52637a">Passage du mot de passe vers un challenge MFA puis emission du JWT final</text>
+<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#2463eb"/></marker></defs>
+<line x1="310" y1="270" x2="380" y2="270" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="630" y1="270" x2="700" y2="235" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="960" y1="235" x2="1030" y2="270" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="830" y1="290" x2="830" y2="370" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="960" y1="430" x2="1030" y2="450" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1160" y1="330" x2="1160" y2="410" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="70" y="210" width="240" height="120" rx="18" fill="#e0f2fe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="94" y="252" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Login</text>
+<text x="94" y="288" font-family="Arial" font-size="16" fill="#334155">Username</text>
+<text x="94" y="314" font-family="Arial" font-size="16" fill="#334155">Mot de passe</text>
+<rect x="380" y="210" width="250" height="120" rx="18" fill="#dcfce7" stroke="#1d4ed8" stroke-width="2"/>
+<text x="404" y="252" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Verification</text>
+<text x="404" y="288" font-family="Arial" font-size="16" fill="#334155">bcrypt</text>
+<text x="404" y="314" font-family="Arial" font-size="16" fill="#334155">Utilisateur actif</text>
+<rect x="700" y="170" width="260" height="120" rx="18" fill="#ede9fe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="724" y="212" font-family="Arial" font-size="22" font-weight="700" fill="#172033">MFA actif ?</text>
+<text x="724" y="248" font-family="Arial" font-size="16" fill="#334155">Oui: challenge</text>
+<text x="724" y="274" font-family="Arial" font-size="16" fill="#334155">Non: JWT direct</text>
+<rect x="700" y="370" width="260" height="120" rx="18" fill="#fff7ed" stroke="#1d4ed8" stroke-width="2"/>
+<text x="724" y="412" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Code TOTP</text>
+<text x="724" y="448" font-family="Arial" font-size="16" fill="#334155">6 chiffres</text>
+<text x="724" y="474" font-family="Arial" font-size="16" fill="#334155">30 secondes</text>
+<rect x="1030" y="210" width="260" height="120" rx="18" fill="#fee2e2" stroke="#1d4ed8" stroke-width="2"/>
+<text x="1054" y="252" font-family="Arial" font-size="22" font-weight="700" fill="#172033">JWT final</text>
+<text x="1054" y="288" font-family="Arial" font-size="16" fill="#334155">Bearer token</text>
+<text x="1054" y="314" font-family="Arial" font-size="16" fill="#334155">Acces API</text>
+<rect x="1030" y="410" width="260" height="120" rx="18" fill="#e2e8f0" stroke="#1d4ed8" stroke-width="2"/>
+<text x="1054" y="452" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Audit log</text>
+<text x="1054" y="488" font-family="Arial" font-size="16" fill="#334155">login_success</text>
+<text x="1054" y="514" font-family="Arial" font-size="16" fill="#334155">mfa_failed</text>
+</svg>

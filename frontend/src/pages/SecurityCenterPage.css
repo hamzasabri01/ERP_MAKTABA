@@ -1,0 +1,349 @@
+.security-page {
+  gap: 1rem;
+}
+
+.security-hero,
+.security-metric,
+.security-panel,
+.risk-card {
+  animation: securityIn .32s ease both;
+}
+
+.security-hero {
+  min-height: 124px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(135deg, rgba(34,197,94,.12), transparent 34%),
+    var(--bg2);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 12%, transparent);
+}
+
+.security-hero.risk-medium {
+  background: linear-gradient(135deg, rgba(245,158,11,.14), transparent 34%), var(--bg2);
+}
+
+.security-hero.risk-high {
+  background: linear-gradient(135deg, rgba(239,68,68,.16), transparent 34%), var(--bg2);
+}
+
+.security-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  margin-bottom: .35rem;
+  color: var(--success);
+  font-size: .76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.security-hero h1 {
+  font-size: 1.55rem;
+  line-height: 1.1;
+}
+
+.security-hero p {
+  margin-top: .35rem;
+  color: var(--text2);
+}
+
+.security-overview {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(5, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.risk-card,
+.security-metric,
+.security-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 7%, transparent);
+}
+
+.risk-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-left: 4px solid var(--success);
+}
+
+.risk-card.risk-medium { border-left-color: var(--warning); }
+.risk-card.risk-high { border-left-color: var(--danger); }
+
+.risk-ring {
+  width: 82px;
+  height: 82px;
+  flex: 0 0 82px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-radius: 50%;
+  background: var(--bg3);
+  border: 8px solid rgba(34,197,94,.26);
+}
+
+.risk-medium .risk-ring { border-color: rgba(245,158,11,.3); }
+.risk-high .risk-ring { border-color: rgba(239,68,68,.32); }
+
+.risk-ring strong {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.risk-ring span,
+.risk-card p {
+  color: var(--text3);
+  font-size: .76rem;
+}
+
+.risk-card > div:last-child > span {
+  color: var(--text3);
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.risk-card h3 {
+  margin: .2rem 0;
+}
+
+.security-metric {
+  min-height: 132px;
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.security-metric::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+.security-metric.good::before { background: var(--success); }
+.security-metric.warn::before { background: var(--warning); }
+.security-metric.info::before { background: var(--accent); }
+
+.security-metric > span {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  margin-bottom: .85rem;
+}
+
+.security-metric.good > span { background: rgba(34,197,94,.14); color: var(--success); }
+.security-metric.warn > span { background: rgba(245,158,11,.14); color: var(--warning); }
+
+.security-metric strong {
+  display: block;
+  font-size: 1.35rem;
+}
+
+.security-metric p {
+  color: var(--text2);
+  font-size: .78rem;
+  font-weight: 700;
+}
+
+.security-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, .8fr);
+  gap: 1rem;
+}
+
+.security-grid.wide {
+  grid-template-columns: minmax(0, 1fr) minmax(330px, .75fr);
+}
+
+.security-panel {
+  padding: 1rem;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+}
+
+.security-panel-head {
+  margin-bottom: 1rem;
+}
+
+.security-panel-head span {
+  display: block;
+  margin-top: .25rem;
+  color: var(--text3);
+  font-size: .78rem;
+}
+
+.security-alert-list,
+.security-activity {
+  display: flex;
+  flex-direction: column;
+  gap: .75rem;
+}
+
+.security-alert,
+.activity-row,
+.integrity-box {
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  padding: .75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg3);
+}
+
+.security-alert.level-high { border-color: rgba(239,68,68,.32); color: var(--danger); }
+.security-alert.level-medium { border-color: rgba(245,158,11,.32); color: var(--warning); }
+.security-alert.level-low { border-color: rgba(34,197,94,.3); color: var(--success); }
+
+.security-alert strong,
+.integrity-box strong,
+.activity-row strong {
+  display: block;
+  color: var(--text);
+  font-size: .86rem;
+}
+
+.security-alert span,
+.integrity-box span,
+.activity-row small {
+  color: var(--text3);
+  font-size: .75rem;
+}
+
+.integrity-box.ok {
+  border-color: rgba(34,197,94,.3);
+  color: var(--success);
+}
+
+.integrity-box.bad {
+  border-color: rgba(239,68,68,.35);
+  color: var(--danger);
+}
+
+.hash-preview {
+  margin-top: .75rem;
+  padding: .75rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg3);
+}
+
+.hash-preview span {
+  display: block;
+  margin-bottom: .35rem;
+  color: var(--text3);
+  font-size: .74rem;
+  font-weight: 700;
+}
+
+.hash-preview code,
+.activity-row code {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--accent);
+  font-size: .72rem;
+}
+
+.activity-row {
+  align-items: flex-start;
+}
+
+.action-chip {
+  flex: 0 0 auto;
+  padding: .22rem .5rem;
+  border-radius: 999px;
+  background: var(--bg2);
+  color: var(--text2);
+  font-size: .68rem;
+  font-weight: 900;
+}
+
+.action-login_failed,
+.action-delete,
+.action-restore {
+  color: var(--danger);
+  background: rgba(239,68,68,.12);
+}
+
+.action-login_success,
+.action-create {
+  color: var(--success);
+  background: rgba(34,197,94,.12);
+}
+
+.security-empty {
+  padding: 1.25rem;
+  text-align: center;
+  border: 1px dashed var(--border2);
+  border-radius: var(--radius-sm);
+  color: var(--text3);
+  background: var(--bg3);
+}
+
+.skeleton,
+.skeleton-panel {
+  min-height: 132px;
+  background: linear-gradient(90deg, var(--bg2), var(--bg3), var(--bg2));
+  background-size: 220% 100%;
+  animation: shimmer 1.1s linear infinite;
+}
+
+.skeleton-panel {
+  min-height: 260px;
+}
+
+@keyframes securityIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1280px) {
+  .security-overview {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .risk-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .security-grid,
+  .security-grid.wide {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .security-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .security-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

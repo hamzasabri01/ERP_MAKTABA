@@ -1,0 +1,182 @@
+.clients-toolbar {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.clients-toolbar .search-wrap {
+  max-width: 360px;
+}
+
+.client-credit-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+.credit-cell,
+.credit-limit-cell {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.credit-cell small,
+.client-credit-summary span,
+.credit-usage-block span,
+.credit-invoice-row span,
+.credit-payment-panel p,
+.client-info-grid span {
+  color: var(--text2);
+  font-size: .8rem;
+}
+
+.text-warning { color: var(--warning); }
+
+.credit-mini-track,
+.credit-usage-track {
+  height: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.credit-mini-track span,
+.credit-usage-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--success), var(--warning), var(--danger));
+}
+
+.client-credit-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: .75rem;
+  margin-bottom: 1rem;
+}
+
+.client-credit-summary > div,
+.credit-payment-panel,
+.credit-ledger,
+.client-notes {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+}
+
+.client-credit-summary > div {
+  padding: .9rem;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.client-credit-summary strong {
+  font-size: 1.15rem;
+}
+
+.credit-usage-block {
+  margin-bottom: 1rem;
+}
+
+.credit-usage-block > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: .35rem;
+}
+
+.client-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: .75rem;
+}
+
+.client-info-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.client-notes {
+  margin-top: 1rem;
+  padding: .75rem;
+  font-size: .875rem;
+}
+
+.credit-ledger {
+  margin-top: 1rem;
+  overflow: hidden;
+}
+
+.credit-ledger-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.credit-ledger-head > div {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  font-weight: 700;
+}
+
+.credit-empty {
+  padding: 1rem;
+  color: var(--text2);
+}
+
+.credit-invoices {
+  display: grid;
+}
+
+.credit-invoice-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.credit-invoice-row:last-child {
+  border-bottom: 0;
+}
+
+.credit-invoice-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.credit-invoice-row > div:last-child {
+  text-align: right;
+}
+
+.credit-payment-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+}
+
+.credit-payment-panel h3 {
+  margin-bottom: .85rem;
+}
+
+.credit-payment-panel p {
+  margin-top: .75rem;
+}
+
+@media (max-width: 720px) {
+  .client-credit-summary,
+  .credit-invoice-row,
+  .client-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .credit-invoice-row > div:last-child {
+    text-align: left;
+  }
+}

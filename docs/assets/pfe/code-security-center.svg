@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="934" viewBox="0 0 1400 934">
+<rect width="1400" height="934" fill="#0f172a"/>
+<rect x="40" y="40" width="1320" height="854" rx="18" fill="#111827" stroke="#334155"/>
+<text x="70" y="88" font-family="Arial" font-size="24" font-weight="700" fill="#e5e7eb">Extrait backend - Security Center</text>
+<text x="70" y="130" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">01</text>
+<text x="130" y="130" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        expected = compute_log_hash(row, previous_hash)</text>
+<text x="70" y="158" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">02</text>
+<text x="130" y="158" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        if row.previous_hash != previous_hash or row.log_hash != expected:</text>
+<text x="70" y="186" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">03</text>
+<text x="130" y="186" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">            broken.append(row.id)</text>
+<text x="70" y="214" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">04</text>
+<text x="130" y="214" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        previous_hash = row.log_hash or ""</text>
+<text x="70" y="242" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">05</text>
+<text x="130" y="242" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    return {</text>
+<text x="70" y="270" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">06</text>
+<text x="130" y="270" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        "ok": not broken,</text>
+<text x="70" y="298" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">07</text>
+<text x="130" y="298" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        "checked": len(rows),</text>
+<text x="70" y="326" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">08</text>
+<text x="130" y="326" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        "legacy_count": legacy_count,</text>
+<text x="70" y="354" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">09</text>
+<text x="130" y="354" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        "broken_count": len(broken),</text>
+<text x="70" y="382" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">10</text>
+<text x="130" y="382" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        "last_hash": previous_hash,</text>
+<text x="70" y="410" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">11</text>
+<text x="130" y="410" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    }</text>
+<text x="70" y="438" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">12</text>
+<text x="130" y="438" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="466" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">13</text>
+<text x="130" y="466" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="494" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">14</text>
+<text x="130" y="494" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">@router.get("/overview")</text>
+<text x="70" y="522" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">15</text>
+<text x="130" y="522" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">def security_overview(db: Session = Depends(get_db), user: User = Depends(get_current_user)):</text>
+<text x="70" y="550" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">16</text>
+<text x="130" y="550" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    now = datetime.utcnow()</text>
+<text x="70" y="578" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">17</text>
+<text x="130" y="578" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    day_start = now - timedelta(hours=24)</text>
+<text x="70" y="606" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">18</text>
+<text x="130" y="606" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    week_start = now - timedelta(days=7)</text>
+<text x="70" y="634" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">19</text>
+<text x="130" y="634" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb"></text>
+<text x="70" y="662" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">20</text>
+<text x="130" y="662" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    failed_24h = db.query(func.count(AuditLog.id)).filter(</text>
+<text x="70" y="690" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">21</text>
+<text x="130" y="690" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        AuditLog.action == "login_failed",</text>
+<text x="70" y="718" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">22</text>
+<text x="130" y="718" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        AuditLog.created_at &gt;= day_start,</text>
+<text x="70" y="746" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">23</text>
+<text x="130" y="746" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    ).scalar() or 0</text>
+<text x="70" y="774" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">24</text>
+<text x="130" y="774" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    success_24h = db.query(func.count(AuditLog.id)).filter(</text>
+<text x="70" y="802" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">25</text>
+<text x="130" y="802" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        AuditLog.action == "login_success",</text>
+<text x="70" y="830" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">26</text>
+<text x="130" y="830" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">        AuditLog.created_at &gt;= day_start,</text>
+<text x="70" y="858" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">27</text>
+<text x="130" y="858" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    ).scalar() or 0</text>
+<text x="70" y="886" font-family="Consolas, monospace" font-size="18" fill="#94a3b8">28</text>
+<text x="130" y="886" font-family="Consolas, monospace" font-size="18" fill="#e5e7eb">    sensitive_24h = db.query(func.count(AuditLog.id)).filter(</text>
+</svg>

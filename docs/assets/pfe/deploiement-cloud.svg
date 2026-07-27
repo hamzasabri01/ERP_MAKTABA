@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="850" viewBox="0 0 1400 850">
+<rect width="1400" height="850" fill="#f5f8fc"/>
+<text x="60" y="70" font-family="Arial" font-size="34" font-weight="700" fill="#172033">Deploiement Cloud securise</text>
+<text x="60" y="110" font-family="Arial" font-size="18" fill="#52637a">Modele cible avec reverse proxy HTTPS, firewall et volumes persistants</text>
+<defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10 Z" fill="#2463eb"/></marker></defs>
+<line x1="300" y1="275" x2="370" y2="275" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="600" y1="275" x2="670" y2="275" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="920" y1="275" x2="990" y2="230" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1140" y1="290" x2="1140" y2="360" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<line x1="1040" y1="470" x2="920" y2="520" stroke="#2463eb" stroke-width="4" marker-end="url(#arrow)"/>
+<rect x="70" y="220" width="230" height="110" rx="18" fill="#e0f2fe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="94" y="262" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Internet</text>
+<text x="94" y="298" font-family="Arial" font-size="16" fill="#334155">Utilisateurs</text>
+<text x="94" y="324" font-family="Arial" font-size="16" fill="#334155">HTTPS</text>
+<rect x="370" y="220" width="230" height="110" rx="18" fill="#dcfce7" stroke="#1d4ed8" stroke-width="2"/>
+<text x="394" y="262" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Firewall</text>
+<text x="394" y="298" font-family="Arial" font-size="16" fill="#334155">80/443 publics</text>
+<text x="394" y="324" font-family="Arial" font-size="16" fill="#334155">SSH limite</text>
+<rect x="670" y="220" width="250" height="110" rx="18" fill="#ede9fe" stroke="#1d4ed8" stroke-width="2"/>
+<text x="694" y="262" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Reverse Proxy</text>
+<text x="694" y="298" font-family="Arial" font-size="16" fill="#334155">TLS</text>
+<text x="694" y="324" font-family="Arial" font-size="16" fill="#334155">Headers proxy</text>
+<rect x="990" y="170" width="300" height="120" rx="18" fill="#fff7ed" stroke="#1d4ed8" stroke-width="2"/>
+<text x="1014" y="212" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Conteneur ProERP</text>
+<text x="1014" y="248" font-family="Arial" font-size="16" fill="#334155">Frontend build</text>
+<text x="1014" y="274" font-family="Arial" font-size="16" fill="#334155">API FastAPI</text>
+<rect x="990" y="360" width="300" height="110" rx="18" fill="#fee2e2" stroke="#1d4ed8" stroke-width="2"/>
+<text x="1014" y="402" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Volumes</text>
+<text x="1014" y="438" font-family="Arial" font-size="16" fill="#334155">Base SQLite</text>
+<text x="1014" y="464" font-family="Arial" font-size="16" fill="#334155">Uploads, backups</text>
+<rect x="670" y="480" width="250" height="110" rx="18" fill="#e2e8f0" stroke="#1d4ed8" stroke-width="2"/>
+<text x="694" y="522" font-family="Arial" font-size="22" font-weight="700" fill="#172033">Monitoring</text>
+<text x="694" y="558" font-family="Arial" font-size="16" fill="#334155">Security Center</text>
+<text x="694" y="584" font-family="Arial" font-size="16" fill="#334155">Audit logs</text>
+</svg>

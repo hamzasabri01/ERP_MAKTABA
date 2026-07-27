@@ -1,0 +1,8 @@
+{
+  "api_base_url": "http://localhost:8000/api",
+  "maintenance_mode": false,
+  "app_version": "1.0.0",
+  "project_id": "app-erp-622bc",
+  "project_number": "223793044005",
+  "messaging_sender_id": "223793044005"
+}

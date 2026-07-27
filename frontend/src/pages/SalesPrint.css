@@ -1,0 +1,210 @@
+.sales-print-doc {
+  display: none;
+}
+
+.print-sheet {
+  background: #fff;
+  color: #111827;
+  width: 210mm;
+  min-height: 297mm;
+  padding: 16mm;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.print-header,
+.print-parties,
+.print-bottom,
+.print-totals div,
+.print-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.print-header {
+  align-items: flex-start;
+  border-bottom: 2px solid var(--brand-document-color, #111827);
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+}
+
+.print-brand {
+  font-size: 24px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.print-brand-lockup {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.print-logo {
+  width: var(--brand-print-logo-size, 42px);
+  height: var(--brand-print-logo-size, 42px);
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.print-company,
+.print-doc-meta,
+.print-parties > div,
+.print-notes,
+.print-totals,
+.print-footer {
+  display: flex;
+  flex-direction: column;
+}
+
+.print-company {
+  gap: 3px;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.print-doc-meta {
+  min-width: 190px;
+  align-items: flex-end;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.print-doc-meta h1 {
+  color: #111827;
+  font-size: 28px;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.print-doc-meta strong {
+  font-size: 14px;
+}
+
+.print-parties {
+  margin-bottom: 18px;
+}
+
+.print-parties > div {
+  width: 48%;
+  min-height: 92px;
+  border: 1px solid #d1d5db;
+  padding: 10px;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.print-parties h2,
+.print-notes h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0 0 4px;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-bottom: 18px;
+}
+
+.print-table th {
+  background: var(--brand-document-color, #111827);
+  color: #fff;
+  text-align: left;
+  padding: 8px;
+}
+
+.print-table td {
+  color: #111827;
+  padding: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.print-table th:nth-child(n+2),
+.print-table td:nth-child(n+2) {
+  text-align: right;
+}
+
+.print-bottom {
+  align-items: flex-start;
+}
+
+.print-notes {
+  width: 52%;
+  color: #4b5563;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.print-totals {
+  width: 270px;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.print-totals div {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 6px;
+}
+
+.print-grand-total {
+  border-bottom: none !important;
+  background: var(--brand-document-color, #111827);
+  color: #fff;
+  padding: 10px !important;
+  font-size: 15px;
+}
+
+.print-footer {
+  margin-top: 28px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 8px;
+  color: #6b7280;
+  font-size: 10px;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .sales-print-doc,
+  .sales-print-doc *,
+  .thermal-print-active,
+  .thermal-print-active * {
+    visibility: visible;
+  }
+
+  .sales-print-doc {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: #fff;
+    z-index: 99999;
+  }
+
+  .thermal-print-active {
+    display: block !important;
+    position: fixed !important;
+    inset: 0 auto auto 0 !important;
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    z-index: 99999 !important;
+  }
+
+  .print-sheet {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0;
+    box-shadow: none;
+  }
+
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}

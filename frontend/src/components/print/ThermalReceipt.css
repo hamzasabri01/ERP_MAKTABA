@@ -1,0 +1,249 @@
+.thermal-receipt {
+  width: min(100%, 82mm);
+  margin: 0 auto;
+  padding: 4mm 4mm 5mm;
+  background: #fff;
+  color: #111;
+  border: 1px solid #d6d6d6;
+  border-radius: 6px;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.thermal-receipt[dir="rtl"] {
+  font-family: Tahoma, Arial, sans-serif;
+}
+
+.thermal-head {
+  text-align: center;
+  border-bottom: 1px dashed #111;
+  padding-bottom: 6px;
+  margin-bottom: 7px;
+}
+
+.thermal-head img {
+  width: 38px;
+  height: 38px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 3px;
+}
+
+.thermal-head strong {
+  display: block;
+  font-size: 15px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.thermal-head small,
+.thermal-head small span {
+  display: block;
+  color: #333;
+  font-size: 9px;
+}
+
+.thermal-title {
+  margin-top: 6px;
+  padding: 3px 6px;
+  background:
+    repeating-linear-gradient(135deg, #e5e5e5 0 3px, #fff 3px 6px);
+  border: 1px solid #c8c8c8;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.thermal-meta {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 7px;
+}
+
+.thermal-meta div,
+.thermal-totals div,
+.thermal-payment div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.thermal-meta span,
+.thermal-totals span,
+.thermal-payment span {
+  color: #333;
+}
+
+.thermal-meta b,
+.thermal-totals b,
+.thermal-payment b {
+  text-align: end;
+}
+
+.thermal-client {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #999;
+}
+
+.thermal-client b {
+  font-size: 15px;
+  text-transform: uppercase;
+}
+
+.thermal-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  margin: 7px 0 6px;
+  color: #111 !important;
+  font-size: 9.4px;
+  line-height: 1.15;
+  border: 1px solid #1f2937;
+}
+
+.thermal-table th,
+.thermal-table td {
+  box-sizing: border-box;
+  border: 1px solid #1f2937;
+  padding: 3px 2px;
+  vertical-align: middle;
+  text-align: center;
+  color: #111 !important;
+  background: #fff;
+  overflow: hidden;
+}
+
+.thermal-table th {
+  background: #e8edf4 !important;
+  color: #111 !important;
+  font-weight: 900;
+  font-size: 8.2px;
+  line-height: 1.05;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.thermal-col-qty {
+  width: 11%;
+}
+
+.thermal-col-unit {
+  width: 10%;
+}
+
+.thermal-col-item {
+  width: 39%;
+}
+
+.thermal-col-price,
+.thermal-col-total {
+  width: 20%;
+}
+
+.thermal-item-name {
+  text-align: start !important;
+}
+
+.thermal-table td strong {
+  display: block;
+  color: #111 !important;
+  font-size: 9.6px;
+  font-weight: 800;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.thermal-table td span {
+  display: block;
+  color: #111 !important;
+  font-size: 8.5px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.thermal-num,
+.thermal-unit,
+.thermal-money {
+  color: #111 !important;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.thermal-money {
+  font-size: 8.8px;
+  text-align: end !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.thermal-totals,
+.thermal-payment {
+  border-top: 1px dashed #111;
+  padding-top: 6px;
+  margin-top: 7px;
+  display: grid;
+  gap: 3px;
+}
+
+.thermal-grand {
+  align-items: baseline;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.thermal-grand b {
+  font-size: 22px;
+}
+
+.thermal-payment {
+  border-bottom: 1px dashed #111;
+  padding-bottom: 6px;
+}
+
+.thermal-footer {
+  padding-top: 10px;
+  text-align: center;
+}
+
+.thermal-footer strong {
+  font-size: 16px;
+}
+
+@media print {
+  body:has(.thermal-print-active) * {
+    visibility: hidden !important;
+  }
+
+  .thermal-print-active,
+  .thermal-print-active * {
+    visibility: visible !important;
+  }
+
+  .thermal-print-active {
+    display: block !important;
+    position: fixed !important;
+    inset: 0 auto auto 0 !important;
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    z-index: 99999 !important;
+  }
+
+  .thermal-print-active .thermal-receipt {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 3mm !important;
+    box-shadow: none !important;
+  }
+
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}

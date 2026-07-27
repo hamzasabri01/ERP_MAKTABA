@@ -1,0 +1,60 @@
+# Environment files
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+backend/venv/
+backend/.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / Vite
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Databases and runtime data
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+backend/proerp.db
+backend/proerp.db-shm
+backend/proerp.db-wal
+backend/backups/
+backups/
+uploads/
+backend/uploads/
+
+# Logs
+*.log
+logs/
+frontend/*.log
+cloudflared-current.*.log
+firebase-debug.log
+
+# Local tooling and IDE files
+.firebase/
+.vscode/
+.idea/
+tools/cloudflared.exe
+
+# OS files
+.DS_Store
+Thumbs.db

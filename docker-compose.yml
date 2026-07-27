@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend-runtime
+    container_name: secureerp-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      BACKEND_PORT: ${BACKEND_PORT:-8015}
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-before-production}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      MFA_TOKEN_EXPIRE_MINUTES: ${MFA_TOKEN_EXPIRE_MINUTES:-5}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-strict}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-172.16.0.0/12}
+      UVICORN_FORWARDED_ALLOW_IPS: ${UVICORN_FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      LOGIN_RATE_WINDOW_MINUTES: ${LOGIN_RATE_WINDOW_MINUTES:-15}
+      LOGIN_RATE_MAX_ATTEMPTS: ${LOGIN_RATE_MAX_ATTEMPTS:-8}
+      MFA_RATE_MAX_ATTEMPTS: ${MFA_RATE_MAX_ATTEMPTS:-8}
+      REFRESH_RATE_MAX_ATTEMPTS: ${REFRESH_RATE_MAX_ATTEMPTS:-20}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/backend/proerp.db}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8015,http://127.0.0.1:8015}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - ./backend/proerp.db:/app/backend/proerp.db
+      - ./backend/company_settings.json:/app/backend/company_settings.json
+      - ./backend/backups:/app/backend/backups
+      - ./backend/uploads:/app/backend/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8015/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  nginx:
+    build:
+      context: .
+      target: frontend-nginx
+    container_name: secureerp-nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
