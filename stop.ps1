@@ -4,6 +4,8 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RuntimeDir = Join-Path $ScriptDir ".runtime"
 $PidFile = Join-Path $RuntimeDir "autostart.pid"
 
+Stop-ScheduledTask -TaskName "LibrarySabri" -ErrorAction SilentlyContinue
+
 if (Test-Path $PidFile) {
     $WatchdogPid = [int]([IO.File]::ReadAllText($PidFile).Trim())
     if ($WatchdogPid -and $WatchdogPid -ne $PID) {
