@@ -2,6 +2,10 @@
 # Maktaba Print Web - Launcher
 # ================================
 
+param(
+    [switch]$NoBrowser
+)
+
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -162,7 +166,9 @@ Start-Sleep 5
 # Open Browser
 # ===============================
 Write-Info "Opening browser..."
-Start-Process "http://localhost:5173"
+if (-not $NoBrowser) {
+    Start-Process "http://localhost:5173"
+}
 
 # ===============================
 # Summary
@@ -196,35 +202,3 @@ Write-Host "Backend PID : $($backendProc.Id)"
 Write-Host "Frontend PID: $($frontendProc.Id)`n"
 
 Write-OK "Services started in background. This window can be closed."
-
-# ===============================
-# Keep alive
-# ===============================
-try {
-    while ($true) { Start-Sleep 5 }
-}
-finally {
-
-    Write-Warn "Stopping services..."
-
-    try { Stop-Process -Id $backendProc.Id -Force } catch {}
-    try { Stop-Process -Id $frontendProc.Id -Force } catch {}
-    if ($cloudflaredProc) {
-        try { Stop-Process -Id $cloudflaredProc.Id -Force } catch {}
-    }
-
-    foreach ($port in @(8000, 5173)) {
-
-        $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-
-        if ($connections) {
-            $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-
-            foreach ($processId  in $pids) {
-                try { Stop-Process -Id $processId  -Force } catch {}
-            }
-        }
-    }
-
-    Write-OK "All services stopped"
-}
