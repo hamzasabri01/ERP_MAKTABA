@@ -15,17 +15,19 @@ if ([string]::IsNullOrWhiteSpace($StartupDir)) {
 }
 
 $PowerShellExe = (Get-Process -Id $PID).Path
-$ShortcutPath = Join-Path $StartupDir "Library Sabri.lnk"
-$WshShell = New-Object -ComObject WScript.Shell
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $PowerShellExe
-$Shortcut.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$StartScript`""
-$Shortcut.WorkingDirectory = $ScriptDir
-$Shortcut.WindowStyle = 7
-$Shortcut.Description = "Demarrage automatique de Library Sabri"
-$Shortcut.Save()
+$LegacyShortcut = Join-Path $StartupDir "Library Sabri.lnk"
+$StartupLauncher = Join-Path $StartupDir "Library Sabri.vbs"
+Remove-Item -LiteralPath $LegacyShortcut -Force -ErrorAction SilentlyContinue
+
+# A Unicode VBS launcher is used instead of WScript.Shell.CreateShortcut.
+# CreateShortcut can corrupt Arabic Windows user paths into "????".
+$VbsContent = @'
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run """{0}"" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{1}""", 0, False
+'@ -f $PowerShellExe, $StartScript
+[IO.File]::WriteAllText($StartupLauncher, $VbsContent, [Text.Encoding]::Unicode)
 
 Write-Host "[OK] Demarrage automatique active." -ForegroundColor Green
 Write-Host "     Au prochain login Windows, l'application demarrera en arriere-plan" -ForegroundColor Gray
 Write-Host "     et le navigateur ouvrira http://localhost:5173" -ForegroundColor Cyan
-Write-Host "     Raccourci: $ShortcutPath" -ForegroundColor Gray
+Write-Host "     Lanceur: $StartupLauncher" -ForegroundColor Gray
