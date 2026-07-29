@@ -98,7 +98,9 @@ for ($i = 0; $i -lt 30; $i++) {
 
     if ($backendProc.HasExited) { break }
     try {
-        Invoke-WebRequest "http://localhost:8000/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
+        # Use the explicit IPv4 loopback. Some Windows installations resolve
+        # localhost to ::1 while Uvicorn is listening on 0.0.0.0 (IPv4).
+        Invoke-WebRequest "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
         $ok = $true
         break
     } catch {}
