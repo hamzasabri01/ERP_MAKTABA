@@ -94,8 +94,10 @@ Write-OK "Backend running (PID $($backendProc.Id))"
 # Start trusted HTTPS scanner tunnel
 # ===============================
 $cloudflaredProc = $null
-$CloudflaredPath = Join-Path $ScriptDir "tools\cloudflared.exe"
-if (Test-Path $CloudflaredPath) {
+$BundledCloudflared = Join-Path $ScriptDir "tools\cloudflared.exe"
+$CloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
+$CloudflaredPath = if (Test-Path $BundledCloudflared) { $BundledCloudflared } elseif ($CloudflaredCommand) { $CloudflaredCommand.Source } else { $null }
+if ($CloudflaredPath) {
     Write-Info "Starting HTTPS tunnel for live mobile scanner..."
     $RuntimeDir = Join-Path $ScriptDir ".runtime"
     New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
@@ -119,7 +121,7 @@ if (Test-Path $CloudflaredPath) {
 Write-Info "Starting frontend..."
 
 $frontendProc = Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c", "npm run dev" `
+    -ArgumentList "/c", "npm run dev -- --host 0.0.0.0" `
     -WorkingDirectory $FrontendDir `
     -WindowStyle Hidden `
     -PassThru
@@ -135,9 +137,26 @@ Start-Process "http://localhost:5173"
 # ===============================
 # Summary
 # ===============================
+$LanAddress = $null
+try {
+    $socket = New-Object System.Net.Sockets.UdpClient
+    $socket.Connect("8.8.8.8", 80)
+    $LanAddress = ($socket.Client.LocalEndPoint).Address.ToString()
+    $socket.Close()
+} catch {
+    $LanAddress = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
+        Select-Object -First 1 -ExpandProperty IPAddress)
+}
+
 Write-Host "`n===============================" -ForegroundColor Green
 Write-Host " MAKTABA PRINT RUNNING" -ForegroundColor Green
 Write-Host "===============================`n" -ForegroundColor Green
+Write-Host "  Lien sur ce PC : http://localhost:5173" -ForegroundColor Cyan
+if ($LanAddress) {
+    Write-Host "  Lien autre PC  : http://${LanAddress}:5173" -ForegroundColor Yellow
+    Write-Host "  (Les deux ordinateurs doivent etre sur le meme reseau.)" -ForegroundColor Gray
+}
 
 Write-Host "Frontend : http://localhost:5173"
 Write-Host "Backend  : http://localhost:8000"

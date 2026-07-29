@@ -13,6 +13,18 @@ Application de gestion pour une librairie avec vente de fournitures scolaires, g
 
 ## Installation locale Windows
 
+Installation automatique recommandee apres clonage:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+`setup.ps1` installe automatiquement Python, Node.js et Cloudflared via
+Winget lorsqu'ils sont absents, puis installe toutes les dependances.
+`start.ps1` affiche a la fin le lien local et le lien LAN utilisable depuis
+un autre ordinateur du meme reseau.
+
 Backend:
 
 ```powershell

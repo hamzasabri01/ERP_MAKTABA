@@ -8,6 +8,20 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 function Write-Step($msg) { Write-Host "`n  >> $msg" -ForegroundColor Cyan }
 function Write-OK($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  [ERREUR] $msg" -ForegroundColor Red; Read-Host "Appuyez sur Entree pour quitter"; exit 1 }
+function Refresh-Path {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
+function Install-WithWinget($id, $label) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Fail "$label est absent et Winget est indisponible. Installez App Installer depuis Microsoft Store puis relancez setup.ps1."
+    }
+    Write-Host "  Installation automatique de $label..." -ForegroundColor Yellow
+    winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Installation automatique de $label impossible." }
+    Refresh-Path
+}
 
 Write-Host "`n=========================================" -ForegroundColor Blue
 Write-Host "   ProERP Web -- Setup Windows" -ForegroundColor Blue  
@@ -19,7 +33,9 @@ try {
     $pyVer = python --version 2>&1
     Write-OK $pyVer
 } catch {
-    Write-Fail "Python introuvable. Installez Python 3.11+ depuis https://www.python.org/downloads/ (cochez 'Add to PATH')"
+    Install-WithWinget "Python.Python.3.12" "Python 3.12"
+    try { $pyVer = python --version 2>&1; Write-OK $pyVer }
+    catch { Write-Fail "Python a ete installe mais n'est pas encore accessible. Redemarrez Windows puis relancez setup.ps1." }
 }
 
 # ── Node.js ───────────────────────────────────────────────────────────────────
@@ -28,7 +44,18 @@ try {
     $nodeVer = node --version 2>&1
     Write-OK "Node.js $nodeVer"
 } catch {
-    Write-Fail "Node.js introuvable. Installez Node.js 18+ depuis https://nodejs.org/"
+    Install-WithWinget "OpenJS.NodeJS.LTS" "Node.js LTS"
+    try { $nodeVer = node --version 2>&1; Write-OK "Node.js $nodeVer" }
+    catch { Write-Fail "Node.js a ete installe mais n'est pas encore accessible. Redemarrez Windows puis relancez setup.ps1." }
+}
+
+# Scanner mobile HTTPS (optionnel mais installe automatiquement si possible)
+if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
+    Write-Step "Installation du connecteur scanner mobile..."
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id Cloudflare.cloudflared --exact --silent --accept-package-agreements --accept-source-agreements
+        Refresh-Path
+    }
 }
 
 # ── Backend Setup ─────────────────────────────────────────────────────────────
@@ -57,7 +84,8 @@ Write-Step "Configuration du frontend React..."
 Set-Location "$ScriptDir\frontend"
 
 Write-Host "  Installation des modules npm..." -ForegroundColor Yellow
-npm install --silent
+if (Test-Path "package-lock.json") { npm ci --silent } else { npm install --silent }
+if ($LASTEXITCODE -ne 0) { Write-Fail "Echec installation des modules frontend." }
 Write-OK "Modules npm installes"
 
 # ── Create Desktop Shortcut ──────────────────────────────────────────────────
@@ -82,5 +110,8 @@ Write-Host "      Installation terminee !" -ForegroundColor Green
 Write-Host "=========================================`n" -ForegroundColor Green
 Write-Host "  Pour demarrer: utilisez le raccourci 'ProERP Web'" -ForegroundColor White
 Write-Host "  Ou lancez:     powershell -ExecutionPolicy Bypass -File .\start.ps1`n" -ForegroundColor White
+Write-Host "  Le script de demarrage affichera:" -ForegroundColor White
+Write-Host "    - le lien local de ce PC" -ForegroundColor Gray
+Write-Host "    - le lien reseau pour les autres PC du meme Wi-Fi/LAN`n" -ForegroundColor Gray
 
 Read-Host "Appuyez sur Entree pour terminer"
