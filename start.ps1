@@ -59,9 +59,17 @@ if (-not (Test-Path $VenvPython)) {
 # ===============================
 Write-Info "Starting backend..."
 
+$RuntimeDir = Join-Path $ScriptDir ".runtime"
+New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+$BackendOut = Join-Path $RuntimeDir "backend.out.log"
+$BackendErr = Join-Path $RuntimeDir "backend.err.log"
+Remove-Item -LiteralPath $BackendOut,$BackendErr -Force -ErrorAction SilentlyContinue
+
 $backendProc = Start-Process -FilePath $VenvPython `
-    -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-proxy-headers" `
+    -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers" `
     -WorkingDirectory $BackendDir `
+    -RedirectStandardOutput $BackendOut `
+    -RedirectStandardError $BackendErr `
     -WindowStyle Hidden `
     -PassThru
 
@@ -72,9 +80,10 @@ Write-Info "Waiting backend health..."
 
 $ok = $false
 
-for ($i = 0; $i -lt 20; $i++) {
+for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 2
 
+    if ($backendProc.HasExited) { break }
     try {
         Invoke-WebRequest "http://localhost:8000/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
         $ok = $true
@@ -84,7 +93,15 @@ for ($i = 0; $i -lt 20; $i++) {
 
 if (-not $ok) {
     Write-Err "Backend failed to start"
-    Write-Host "Check backend logs manually"
+    if (Test-Path $BackendErr) {
+        Write-Host "`n--- Backend error details ---" -ForegroundColor Yellow
+        Get-Content -LiteralPath $BackendErr -Tail 35
+    }
+    if (Test-Path $BackendOut) {
+        Write-Host "`n--- Backend output ---" -ForegroundColor Yellow
+        Get-Content -LiteralPath $BackendOut -Tail 15
+    }
+    Write-Host "`nLogs: $BackendErr" -ForegroundColor Gray
     exit 1
 }
 
@@ -99,8 +116,6 @@ $CloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
 $CloudflaredPath = if (Test-Path $BundledCloudflared) { $BundledCloudflared } elseif ($CloudflaredCommand) { $CloudflaredCommand.Source } else { $null }
 if ($CloudflaredPath) {
     Write-Info "Starting HTTPS tunnel for live mobile scanner..."
-    $RuntimeDir = Join-Path $ScriptDir ".runtime"
-    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
     $TunnelOut = Join-Path $RuntimeDir "scanner-tunnel.out.log"
     $TunnelErr = Join-Path $RuntimeDir "scanner-tunnel.err.log"
     Remove-Item -LiteralPath $TunnelOut,$TunnelErr -Force -ErrorAction SilentlyContinue
