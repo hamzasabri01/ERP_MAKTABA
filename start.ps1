@@ -28,20 +28,33 @@ Write-Host "===============================`n" -ForegroundColor Blue
 Write-Info "Cleaning ports 8000 / 5173..."
 
 foreach ($port in @(8000, 5173)) {
-
-    $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-
-    if ($connections) {
-        $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-
-        foreach ($processId  in $pids) {
+    $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if ($listeners) {
+        $ownerIds = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($ownerId in $ownerIds) {
+            if (-not $ownerId -or $ownerId -eq 0 -or $ownerId -eq $PID) { continue }
             try {
-                Stop-Process -Id $processId  -Force -ErrorAction SilentlyContinue
-                Write-OK "Killed process $processId  on port $port"
+                $ownerName = (Get-Process -Id $ownerId -ErrorAction SilentlyContinue).ProcessName
+                Stop-Process -Id $ownerId -Force -ErrorAction Stop
+                Write-OK "Stopped $ownerName (PID $ownerId) on port $port"
             } catch {
-                Write-Warn "Cannot kill PID $processId "
+                Write-Warn "Cannot stop PID $ownerId on port $port"
             }
         }
+    }
+
+    # Windows can need a moment to release the listening socket.
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        if (-not $remaining) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if ($remaining) {
+        $blockedBy = ($remaining | Select-Object -ExpandProperty OwningProcess -Unique) -join ", "
+        Write-Err "Port $port is still occupied by PID $blockedBy"
+        Write-Warn "Close the old application or restart Windows, then run start.ps1 again."
+        exit 1
     }
 }
 
