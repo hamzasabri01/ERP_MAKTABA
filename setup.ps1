@@ -108,6 +108,15 @@ if (Test-Path "package-lock.json") { npm ci --silent } else { npm install --sile
 if ($LASTEXITCODE -ne 0) { Write-Fail "Echec installation des modules frontend." }
 Write-OK "Modules npm installes"
 
+# ── Automatic launch with Windows ────────────────────────────────────────────
+Write-Step "Activation du demarrage automatique Windows..."
+try {
+    & (Join-Path $ScriptDir "install-autostart.ps1")
+    Write-OK "Application configuree pour demarrer a l'ouverture de session"
+} catch {
+    Write-Host "  (Demarrage automatique non cree: $($_.Exception.Message))" -ForegroundColor Yellow
+}
+
 # ── Create Desktop Shortcut ──────────────────────────────────────────────────
 Write-Step "Creation du raccourci bureau..."
 try {
@@ -133,6 +142,7 @@ Write-Host "  Ou lancez:     powershell -ExecutionPolicy Bypass -File .\start.ps
 Write-Host "  Le script de demarrage affichera:" -ForegroundColor White
 Write-Host "    - le lien local de ce PC" -ForegroundColor Gray
 Write-Host "    - le lien reseau pour les autres PC du meme Wi-Fi/LAN`n" -ForegroundColor Gray
+Write-Host "  Au prochain demarrage Windows, le site s'ouvrira automatiquement." -ForegroundColor Green
 
 Set-Location $ScriptDir
 Read-Host "Appuyez sur Entree pour terminer"

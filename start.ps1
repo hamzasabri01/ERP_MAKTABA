@@ -195,7 +195,7 @@ Write-Host "Docs     : http://localhost:8000/docs`n"
 Write-Host "Backend PID : $($backendProc.Id)"
 Write-Host "Frontend PID: $($frontendProc.Id)`n"
 
-Write-Warn "Close this window to stop services"
+Write-OK "Services started in background. This window can be closed."
 
 # ===============================
 # Keep alive

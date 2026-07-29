@@ -25,6 +25,15 @@ Winget lorsqu'ils sont absents, puis installe toutes les dependances.
 `start.ps1` affiche a la fin le lien local et le lien LAN utilisable depuis
 un autre ordinateur du meme reseau.
 
+Pour activer manuellement l'ouverture automatique avec Windows:
+
+```powershell
+.\install-autostart.ps1
+```
+
+Au prochain login Windows, les services demarrent sans fenetre de commande
+visible et le navigateur ouvre automatiquement `http://localhost:5173`.
+
 Backend:
 
 ```powershell
