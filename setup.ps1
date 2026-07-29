@@ -72,11 +72,31 @@ if (-not (Test-Path "venv")) {
 
 Write-Host "  Installation des dependances Python..." -ForegroundColor Yellow
 & "venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
+if ($LASTEXITCODE -ne 0) { Write-Fail "Echec mise a jour de pip." }
 & "venv\Scripts\pip.exe" install -r requirements.txt --quiet
+if ($LASTEXITCODE -ne 0) { Write-Fail "Echec installation des dependances Python." }
 Write-OK "Dependances Python installees"
+
+# ── Local environment and initial administrator ──────────────────────────────
+$BackendEnv = Join-Path $ScriptDir "backend\.env"
+$BackendEnvExample = Join-Path $ScriptDir "backend\.env.example"
+if (-not (Test-Path $BackendEnv)) {
+    Copy-Item -LiteralPath $BackendEnvExample -Destination $BackendEnv
+}
+$EnvContent = [IO.File]::ReadAllText($BackendEnv)
+if ($EnvContent -match "(?m)^INITIAL_ADMIN_PASSWORD=\s*$") {
+    $AdminPassword = Read-Host "  Mot de passe initial admin (Entree = Sabri2026)"
+    if ([string]::IsNullOrWhiteSpace($AdminPassword)) { $AdminPassword = "Sabri2026" }
+    if ($AdminPassword.Length -lt 8 -or $AdminPassword -notmatch "[A-Za-z]" -or $AdminPassword -notmatch "\d" -or $AdminPassword -match "(?i)admin") {
+        Write-Fail "Mot de passe invalide: 8 caracteres minimum, lettres + chiffres, sans le mot admin."
+    }
+    $EnvContent = $EnvContent -replace "(?m)^INITIAL_ADMIN_PASSWORD=.*$", "INITIAL_ADMIN_PASSWORD=$AdminPassword"
+    [IO.File]::WriteAllText($BackendEnv, $EnvContent, [Text.UTF8Encoding]::new($false))
+}
 
 Write-Host "  Initialisation base de donnees..." -ForegroundColor Yellow
 & "venv\Scripts\python.exe" -c "from core.database import init_db; init_db(); print('  Base initialisee sans donnees de demonstration')"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Echec initialisation de la base de donnees." }
 Write-OK "Base de donnees prete"
 
 # ── Frontend Setup ────────────────────────────────────────────────────────────
@@ -114,4 +134,5 @@ Write-Host "  Le script de demarrage affichera:" -ForegroundColor White
 Write-Host "    - le lien local de ce PC" -ForegroundColor Gray
 Write-Host "    - le lien reseau pour les autres PC du meme Wi-Fi/LAN`n" -ForegroundColor Gray
 
+Set-Location $ScriptDir
 Read-Host "Appuyez sur Entree pour terminer"

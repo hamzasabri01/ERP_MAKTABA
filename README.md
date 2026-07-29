@@ -47,7 +47,8 @@ npm run dev
 
 Acces local: `http://localhost:5173`
 
-Identifiants initiaux si la base est vide: `admin` / `admin123`
+Identifiants initiaux par defaut si la base est vide: `admin` / `Sabri2026`.
+Le mot de passe peut etre choisi pendant l'execution de `setup.ps1`.
 
 Le script `setup.ps1` cree une base neuve sans produits, ventes, achats ni
 donnees de demonstration. Pour ajouter volontairement les donnees de formation:
