@@ -42,6 +42,11 @@ backups/
 uploads/
 backend/uploads/
 
+# Local project material and generated runtime artifacts
+PFE/
+.runtime/
+call_*.png
+
 # Logs
 *.log
 logs/

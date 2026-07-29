@@ -324,14 +324,38 @@ class ProductCreate(BaseModel):
     min_stock: NonNegativeQuantityInput = Decimal("5")
     barcode: str = ""
     unit: str = "pcs"
+    purchase_unit: str = "pcs"
+    purchase_to_base_factor: QuantityInput = Decimal("1")
+    allow_fractional_sale: bool = False
     tax_rate: PercentageInput = Decimal("20")
     tva_enabled: int = 1
     product_type: str = "product"
+    pricing_mode: str = "fixed"
     is_active: int = 1
+
+    @field_validator("product_type")
+    @classmethod
+    def validate_product_type(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"product", "service", "bundle"}:
+            raise ValueError("Type de produit invalide")
+        return normalized
+
+    @field_validator("pricing_mode")
+    @classmethod
+    def validate_pricing_mode(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"fixed", "editable", "manual"}:
+            raise ValueError("Mode de tarification invalide")
+        return normalized
 
 
 class ProductUpdate(ProductCreate):
     name: Optional[str] = None
+
+
+class ProductBulkArchive(BaseModel):
+    product_ids: List[int] = Field(min_length=1, max_length=1000)
 
 
 class ProductOut(BaseModel):
@@ -349,9 +373,13 @@ class ProductOut(BaseModel):
     min_stock: float = 5.0
     barcode: str = ""
     unit: str = "pcs"
+    purchase_unit: str = "pcs"
+    purchase_to_base_factor: float = 1.0
+    allow_fractional_sale: bool = False
     tax_rate: float = 20.0
     tva_enabled: int = 1
     product_type: str = "product"
+    pricing_mode: str = "fixed"
     is_active: int = 1
     image_path: Optional[str] = None
     updated_at: Optional[datetime] = None
@@ -370,6 +398,7 @@ class SaleItemIn(BaseModel):
     purchase_price: PriceInput = Decimal("0")
     discount: PercentageInput = Decimal("0")
     tax_rate: PercentageInput = Decimal("20")
+    price_override_reason: str = ""
 
 
 class SaleItemOut(BaseModel):
@@ -379,6 +408,9 @@ class SaleItemOut(BaseModel):
     description: str = ""
     quantity: float
     unit_price: float
+    catalog_unit_price: float = 0.0
+    price_overridden: bool = False
+    price_override_reason: str = ""
     purchase_price: float = 0.0
     discount: float
     discount_amount: float = 0.0
@@ -440,12 +472,51 @@ class SaleCreate(BaseModel):
         return normalized
 
 
+class SaleReturnItemIn(BaseModel):
+    sale_item_id: int
+    quantity: QuantityInput
+    condition: str = "resalable"
+    restock: bool = True
+
+    @field_validator("condition")
+    @classmethod
+    def validate_condition(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"resalable", "damaged"}:
+            raise ValueError("État du produit retourné invalide")
+        return normalized
+
+
+class SaleReturnIn(BaseModel):
+    items: List[SaleReturnItemIn]
+    reason: str
+    resolution: str = "refund"
+    exchange_items: List[SaleItemIn] = Field(default_factory=list)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_return_reason(cls, value: str) -> str:
+        clean = str(value or "").strip()
+        if len(clean) < 3:
+            raise ValueError("Le motif du retour est obligatoire")
+        return clean[:500]
+
+    @field_validator("resolution")
+    @classmethod
+    def validate_resolution(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"refund", "credit", "exchange"}:
+            raise ValueError("Mode de résolution invalide")
+        return normalized
+
+
 class SaleOut(BaseModel):
     id: int
     number: str = ""
     doc_type: str
     status: str
     client_id: Optional[int] = None
+    parent_id: Optional[int] = None
     client_name: str = ""
     date_time: Optional[datetime] = None
     due_date: Optional[datetime] = None
@@ -467,6 +538,11 @@ class SaleOut(BaseModel):
     rounding_scope: str = "line"
     tax_breakdown: List["TaxBreakdownOut"] = []
     items: List[SaleItemOut] = []
+    return_credit_amount: float = 0.0
+    exchange_total: float = 0.0
+    price_difference: float = 0.0
+    exchange_invoice_id: Optional[int] = None
+    exchange_invoice_number: str = ""
     model_config = {"from_attributes": True}
 
 
@@ -499,6 +575,8 @@ class PurchaseItemIn(BaseModel):
     unit_price: PriceInput = Decimal("0")
     discount: PercentageInput = Decimal("0")
     tax_rate: PercentageInput = Decimal("20")
+    purchase_unit: str = ""
+    conversion_factor: Optional[QuantityInput] = None
 
 
 class PurchaseItemOut(BaseModel):
@@ -507,6 +585,9 @@ class PurchaseItemOut(BaseModel):
     product_name: str = ""
     description: str = ""
     quantity: float
+    purchase_unit: str = ""
+    conversion_factor: float = 1.0
+    base_quantity: float = 0.0
     unit_price: float
     discount: float = 0.0
     discount_amount: float = 0.0
@@ -515,6 +596,7 @@ class PurchaseItemOut(BaseModel):
     total_amount: float = 0.0
     line_total: float
     received_quantity: float = 0.0
+    received_base_quantity: float = 0.0
     remaining_quantity: float = 0.0
     model_config = {"from_attributes": True}
 
@@ -572,6 +654,23 @@ class PurchaseReceiptLineIn(BaseModel):
 
 class PurchaseReceiveIn(BaseModel):
     items: List[PurchaseReceiptLineIn] = []
+
+
+class BundleComponentIn(BaseModel):
+    product_id: int
+    quantity: QuantityInput
+
+
+class BundleComponentsUpdate(BaseModel):
+    components: List[BundleComponentIn]
+
+
+class BundleComponentOut(BaseModel):
+    id: int
+    product_id: int
+    product_name: str
+    unit: str
+    quantity: float
 
 
 # ── Expense ───────────────────────────────────────────────────────────────────
@@ -870,6 +969,14 @@ class CompanySettings(BaseModel):
     compact_tables: bool = False
     show_low_stock_alerts: bool = True
     receipt_footer: str = "Merci pour votre visite - fournitures scolaires, photocopie et impression"
+    receipt_paper_width: int = 80
+    receipt_copies: int = 1
+    receipt_auto_print: bool = False
+    receipt_show_logo: bool = True
+    receipt_show_address: bool = True
+    receipt_show_phone: bool = True
+    receipt_show_ice: bool = True
+    receipt_show_barcode: bool = True
     invoice_notes: str = "Articles scolaires, services de copie et impression."
     quote_notes: str = "Devis valable selon disponibilite des articles et services."
     sale_terms: str = "Verifier les quantites, formats d'impression et reliures avant validation."
@@ -933,6 +1040,20 @@ class CompanySettings(BaseModel):
         if len(normalized) != 3 or not normalized.isalpha():
             raise ValueError("La devise doit etre un code ISO alphabetique de 3 lettres")
         return normalized
+
+    @field_validator("receipt_paper_width")
+    @classmethod
+    def validate_receipt_paper_width(cls, value: int) -> int:
+        if value not in {58, 80}:
+            raise ValueError("La largeur du ticket doit etre 58 ou 80 mm")
+        return value
+
+    @field_validator("receipt_copies")
+    @classmethod
+    def validate_receipt_copies(cls, value: int) -> int:
+        if value < 1 or value > 5:
+            raise ValueError("Le nombre de copies doit etre compris entre 1 et 5")
+        return value
 
     @field_validator("price_tax_mode")
     @classmethod

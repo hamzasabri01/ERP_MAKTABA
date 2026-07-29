@@ -55,6 +55,9 @@ def _to_out(p: Purchase, include_items: bool = True) -> PurchaseOut:
             product_name=i.product.name if i.product else (i.description or ""),
             description=i.description or "",
             quantity=i.quantity or 0,
+            purchase_unit=i.purchase_unit or (i.product.purchase_unit if i.product else ""),
+            conversion_factor=i.conversion_factor or 1,
+            base_quantity=i.base_quantity or i.quantity or 0,
             unit_price=i.unit_price or 0,
             discount=i.discount or 0,
             discount_amount=i.discount_amount or 0,
@@ -63,6 +66,7 @@ def _to_out(p: Purchase, include_items: bool = True) -> PurchaseOut:
             total_amount=i.total_amount or i.line_total or 0,
             line_total=i.line_total or 0,
             received_quantity=i.received_quantity or 0,
+            received_base_quantity=i.received_base_quantity or 0,
             remaining_quantity=max((i.quantity or 0) - (i.received_quantity or 0), 0),
         ) for i in (p.items or [])]
     return PurchaseOut(
@@ -97,6 +101,40 @@ def _compute(items_data: list[dict], discount=0) -> dict:
     return calculate_document(items_data, discount, policy_from_settings(load_settings()))
 
 
+def _normalize_purchase_items(db: Session, raw_items: list[dict]) -> list[dict]:
+    product_ids = {int(row["product_id"]) for row in raw_items if row.get("product_id")}
+    products = {
+        product.id: product
+        for product in db.query(Product).filter(Product.id.in_(product_ids)).all()
+    } if product_ids else {}
+    normalized = []
+    for index, raw in enumerate(raw_items):
+        row = dict(raw)
+        product_id = row.get("product_id")
+        if not product_id:
+            row.update(conversion_factor=1, base_quantity=quantize_quantity(row.get("quantity", 0)))
+            normalized.append(row)
+            continue
+        product = products.get(int(product_id))
+        if not product or not product.is_active or product.product_type != "product":
+            raise HTTPException(400, f"Produit stockable invalide à la ligne {index + 1}")
+        configured_factor = quantize_quantity(product.purchase_to_base_factor or 1)
+        requested_factor = row.get("conversion_factor")
+        factor = quantize_quantity(requested_factor if requested_factor is not None else configured_factor)
+        if factor <= 0:
+            raise HTTPException(400, f"Facteur de conversion invalide à la ligne {index + 1}")
+        quantity = quantize_quantity(row.get("quantity", 0))
+        row.update({
+            "description": row.get("description") or product.name,
+            "purchase_unit": str(row.get("purchase_unit") or product.purchase_unit or product.unit or "pcs")[:20],
+            "conversion_factor": factor,
+            "base_quantity": quantize_quantity(quantity * factor),
+            "tax_rate": product.tax_rate if product.tva_enabled else 0,
+        })
+        normalized.append(row)
+    return normalized
+
+
 def _preview(calculation: dict) -> DocumentPreviewOut:
     return DocumentPreviewOut(
         **{key: calculation[key] for key in (
@@ -126,6 +164,9 @@ def _purchase_item(purchase_id: int, item: dict) -> PurchaseItem:
         product_id=item.get("product_id"),
         description=item.get("description", ""),
         quantity=item["quantity"],
+        purchase_unit=item.get("purchase_unit", ""),
+        conversion_factor=item.get("conversion_factor", 1),
+        base_quantity=item.get("base_quantity", item["quantity"]),
         unit_price=item["unit_price"],
         discount=item.get("discount", 0),
         tax_rate=item.get("tax_rate", 0),
@@ -134,6 +175,7 @@ def _purchase_item(purchase_id: int, item: dict) -> PurchaseItem:
         tax_amount=item["tax_amount"],
         total_amount=item["total_amount"],
         received_quantity=0,
+        received_base_quantity=0,
     )
 
 
@@ -148,8 +190,9 @@ def list_purchases(q: Optional[str] = None, skip: int = 0, limit: int = 100, db:
 
 
 @router.post("/preview", response_model=DocumentPreviewOut)
-def preview_purchase(body: PurchaseCreate, user=Depends(get_current_user)):
-    return _preview(_compute([item.model_dump() for item in body.items], body.discount))
+def preview_purchase(body: PurchaseCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    items = _normalize_purchase_items(db, [item.model_dump() for item in body.items])
+    return _preview(_compute(items, body.discount))
 
 
 @router.get("/{pid}", response_model=PurchaseOut)
@@ -165,7 +208,7 @@ def get_purchase(pid: int, db: Session = Depends(get_db), user=Depends(get_curre
 
 @router.post("", response_model=PurchaseOut, status_code=201)
 def create_purchase(body: PurchaseCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    items_data = [item.model_dump() for item in body.items]
+    items_data = _normalize_purchase_items(db, [item.model_dump() for item in body.items])
     calculation = _compute(items_data, body.discount)
     document_date = body.date_time or datetime.now()
     allocation = reserve_document_number(
@@ -200,7 +243,7 @@ def update_purchase(pid: int, body: PurchaseCreate, if_match: Optional[str] = He
     if purchase.status != "draft":
         raise HTTPException(409, "Seul un brouillon peut etre modifie")
     purchase.version = claim_version(db, Purchase, purchase.id, if_match)
-    items_data = [item.model_dump() for item in body.items]
+    items_data = _normalize_purchase_items(db, [item.model_dump() for item in body.items])
     calculation = _compute(items_data, body.discount)
     for key, value in body.model_dump(exclude={"items"}).items():
         setattr(purchase, key, value)
@@ -272,17 +315,30 @@ def receive_purchase(pid: int, body: Optional[PurchaseReceiveIn] = None, idempot
     purchase.version = claim_version(db, Purchase, purchase.id, if_match)
     for item, quantity in requested:
         product = item.product
+        base_quantity = quantity
         if product:
-            if item.unit_price > 0:
-                product.purchase_price = item.unit_price
+            factor = quantize_quantity(item.conversion_factor or 1)
+            base_quantity = quantize_quantity(quantity * factor)
+            base_unit_cost = quantize_quantity((item.unit_price or 0) / factor)
+            previous_quantity = quantize_quantity(product.stock_quantity or 0)
+            previous_cost = quantize_quantity(product.purchase_price or 0)
+            resulting_quantity = previous_quantity + base_quantity
+            if base_unit_cost > 0:
+                # CMP: conserve la valeur du stock existant et y ajoute la
+                # valeur de cette réception (même lorsqu'elle est partielle).
+                product.purchase_price = quantize_quantity(
+                    ((previous_quantity * previous_cost) + (base_quantity * base_unit_cost))
+                    / resulting_quantity
+                ) if resulting_quantity > 0 else base_unit_cost
             apply_stock_movement(
-                db, product, "in", quantity,
+                db, product, "in", base_quantity,
                 operation_key=f"purchase:{purchase.id}:receive:{idempotency_key}:item:{item.id}",
-                user_id=user.id, unit_cost=item.unit_price,
+                user_id=user.id, unit_cost=base_unit_cost,
                 reference=purchase.number, notes="Entree stock reception fournisseur",
                 source_type="purchase", source_id=purchase.id, source_line_id=item.id,
             )
         item.received_quantity = quantize_quantity(item.received_quantity or 0) + quantity
+        item.received_base_quantity = quantize_quantity(item.received_base_quantity or 0) + base_quantity
 
     fully_received = all(quantize_quantity(item.received_quantity or 0) >= quantize_quantity(item.quantity or 0) for item in purchase.items)
     target = PURCHASE_RECEIVED if fully_received else PURCHASE_PARTIALLY_RECEIVED

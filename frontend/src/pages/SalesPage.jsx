@@ -1,14 +1,17 @@
 // src/pages/SalesPage.jsx
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, fmt, fmtDate, fmtDateTime, operationHeaders, PAYMENT_METHODS, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
-import { Plus, Search, Edit2, Trash2, Check, X, CreditCard, Eye, ShoppingCart, Printer, Download, FileCheck2 } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { api, fmt, fmtDate, fmtDateTime, isVatEnabled, operationHeaders, PAYMENT_METHODS, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
+import { Plus, Search, Edit2, Trash2, Check, X, CreditCard, Eye, ShoppingCart, Printer, Download, FileCheck2, Sparkles, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TableLoadingRow } from '../components/ui/LoadingStates'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { getCompanyName, getLogoUrl } from '../lib/brand'
+import { downloadSalePdf, previewSalePdf } from '../lib/documentPdf'
 import { useI18n } from '../lib/i18n'
-import ThermalReceipt from '../components/print/ThermalReceipt'
+import { printThermalReceipt, ThermalReceiptPrintDocument } from '../components/print/ThermalReceipt'
 import './SalesPrint.css'
+import './SalesPage.css'
 
 const DOC_TYPES = [
   { value:'invoice',     label:'Factures' },
@@ -57,6 +60,10 @@ export default function SalesPage() {
   const [clients, setClients]   = useState([])
   const [products, setProducts] = useState([])
   const [q, setQ]               = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [clientFilter, setClientFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [page, setPage]         = useState(1)
   const [loading, setLoading]   = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -66,13 +73,20 @@ export default function SalesPage() {
   const [saving, setSaving]     = useState(false)
   const [payAmt, setPayAmt]     = useState(0)
   const [payMode, setPayMode]   = useState('cash')
+  const [paymentSaving, setPaymentSaving] = useState(false)
+  const [downloadingId, setDownloadingId] = useState(null)
+  const [previewingPdf, setPreviewingPdf] = useState(false)
   const [settings, setSettings] = useState({})
   const [payments, setPayments] = useState([])
   const [timeline, setTimeline] = useState([])
   const [printTarget, setPrintTarget] = useState('')
   const [serverPreview, setServerPreview] = useState(null)
+  const [returnForm, setReturnForm] = useState({ reason:'', resolution:'exchange', items:[], exchange_items:[] })
+  const [returnSaving, setReturnSaving] = useState(false)
+  const [serviceLineDraft, setServiceLineDraft] = useState(null)
   const currency = serverPreview?.currency_code || settings.currency || 'MAD'
   const paymentModes = SETTLEMENT_METHODS
+  const vatEnabled = isVatEnabled(settings)
   const taxRates = String(settings.tax_rates || '0,7,10,14,20').split(',').map(Number).filter(Number.isFinite)
 
   const load = useCallback(async () => {
@@ -80,7 +94,16 @@ export default function SalesPage() {
     setLoadError('')
     try {
       const [salesRes, clientsRes, productsRes, settingsRes] = await Promise.allSettled([
-        api.get('/sales', { params: { doc_type: docType, q: q || undefined, skip: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE } }),
+        api.get('/sales', { params: {
+          doc_type: docType,
+          q: q || undefined,
+          status: statusFilter || undefined,
+          client_id: clientFilter || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          skip: (page - 1) * PAGE_SIZE,
+          limit: PAGE_SIZE,
+        } }),
         api.get('/clients', { params: { limit: 500 } }),
         api.get('/products', { params: { limit: 500 } }),
         api.get('/settings'),
@@ -105,10 +128,10 @@ export default function SalesPage() {
     } finally {
       setLoading(false)
     }
-  }, [docType, q, page])
+  }, [docType, q, statusFilter, clientFilter, dateFrom, dateTo, page])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [docType, q])
+  useEffect(() => { setPage(1) }, [docType, q, statusFilter, clientFilter, dateFrom, dateTo])
   useEffect(() => {
     const resetPrintTarget = () => setPrintTarget('')
     window.addEventListener('afterprint', resetPrintTarget)
@@ -120,14 +143,35 @@ export default function SalesPage() {
     setServerPreview(null)
     setSelected(null); setModal('form')
   }
-  const openEdit = (s) => {
-    setForm({
-      doc_type: s.doc_type, client_id: s.client_id||'', date_time: s.date_time?.slice(0,16)||'',
-      notes: s.notes, discount: s.discount, payment_mode: s.payment_mode, paid_amount: s.paid_amount,
-      items: s.items.map(i => ({ product_id: i.product_id||'', description: i.description, quantity: i.quantity, unit_price: i.unit_price, purchase_price: i.purchase_price, discount: i.discount, tax_rate: i.tax_rate }))
-    })
-    if (form.items.length === 0) form.items.push({ ...EMPTY_ITEM })
-    setServerPreview(null); setSelected(s); setModal('form')
+  const openEdit = async (summary) => {
+    try {
+      const { data: sale } = await api.get(`/sales/${summary.id}`)
+      const items = (sale.items || []).map(item => ({
+        product_id: item.product_id || '',
+        description: item.product_name || item.description || '',
+        quantity: Math.max(1, Math.trunc(Number(item.quantity) || 1)),
+        unit_price: item.unit_price,
+        purchase_price: item.purchase_price,
+        discount: item.discount,
+        tax_rate: item.tax_rate,
+        product_type: products.find(product => product.id === item.product_id)?.product_type,
+      }))
+      setForm({
+        doc_type: sale.doc_type,
+        client_id: sale.client_id || '',
+        date_time: sale.date_time?.slice(0, 16) || '',
+        notes: sale.notes,
+        discount: sale.discount,
+        payment_mode: sale.payment_mode,
+        paid_amount: sale.paid_amount,
+        items: items.length ? items : [{ ...EMPTY_ITEM }],
+      })
+      setServerPreview(null)
+      setSelected(sale)
+      setModal('form')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de charger le document')
+    }
   }
   const openView = async (s) => {
     const [saleRes, paymentRes, auditRes] = await Promise.allSettled([
@@ -141,13 +185,131 @@ export default function SalesPage() {
     setTimeline(auditRes.status === 'fulfilled' ? auditRes.value.data || [] : [])
     setModal('view')
   }
-  const printDocument = () => {
-    setPrintTarget('document')
-    setTimeout(() => window.print(), 50)
+  const printDocument = async () => {
+    if (!selected || previewingPdf) return
+    const previewWindow = window.open('', '_blank')
+    if (previewWindow) {
+      previewWindow.document.title = 'Préparation du PDF…'
+      previewWindow.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">Préparation du PDF…</p>'
+    }
+    setPreviewingPdf(true)
+    try {
+      await previewSalePdf(selected, settings, previewWindow)
+    } catch (error) {
+      previewWindow?.close()
+      toast.error('Impossible de préparer le PDF')
+    } finally {
+      setPreviewingPdf(false)
+    }
   }
-  const printTicket = () => {
+  const printTicket = async () => {
     setPrintTarget('ticket')
-    setTimeout(() => window.print(), 50)
+    await printThermalReceipt()
+  }
+  const openReturn = () => {
+    setReturnForm({
+      reason:'',
+      resolution:'exchange',
+      items:(selected.items || []).map(item => {
+        const product = products.find(row => row.id === item.product_id)
+        return {
+          sale_item_id:item.id,
+          name:item.product_name || item.description,
+          max:item.quantity,
+          quantity:0,
+          condition:'resalable',
+          restock:product?.product_type !== 'service',
+          product_type:product?.product_type || '',
+          credit_unit:Number(item.total_amount || item.line_total || 0) / Math.max(Number(item.quantity) || 1, 1),
+        }
+      }),
+      exchange_items:[],
+    })
+    setModal('return')
+  }
+  const submitReturn = async () => {
+    const items = returnForm.items
+      .filter(item => Number(item.quantity) > 0)
+      .map(({ sale_item_id, quantity, condition, restock }) => ({
+        sale_item_id,
+        quantity:Number(quantity),
+        condition,
+        restock:Boolean(restock && condition === 'resalable'),
+      }))
+    if (!items.length) return toast.error('Sélectionnez au moins un article')
+    if (returnForm.reason.trim().length < 3) return toast.error('Indiquez le motif du retour')
+    const exchangeItems = returnForm.exchange_items
+      .filter(item => item.product_id && Number(item.quantity) > 0)
+      .map(item => ({
+        product_id:Number(item.product_id),
+        description:item.description,
+        quantity:Number(item.quantity),
+        unit_price:Number(item.unit_price),
+        discount:0,
+        tax_rate:Number(item.tax_rate || 0),
+        price_override_reason:item.price_override_reason || '',
+      }))
+    if (returnForm.resolution === 'exchange' && !exchangeItems.length) {
+      return toast.error('Ajoutez au moins un article de remplacement')
+    }
+    if (returnSaving) return
+    setReturnSaving(true)
+    try {
+      const { data } = await api.post(`/sales/${selected.id}/return`, {
+        items,
+        reason:returnForm.reason,
+        resolution:returnForm.resolution,
+        exchange_items:returnForm.resolution === 'exchange' ? exchangeItems : [],
+      }, { headers:operationHeaders(undefined) })
+      const difference = Number(data.price_difference || 0)
+      const settlement = difference > 0
+        ? `Le client doit payer ${fmt(difference)} ${currency}`
+        : difference < 0
+          ? `À rembourser au client : ${fmt(Math.abs(difference))} ${currency}`
+          : 'Échange équilibré, aucun montant restant'
+      toast.success(returnForm.resolution === 'exchange'
+        ? `Échange enregistré (${data.exchange_invoice_number}). ${settlement}`
+        : 'Retour enregistré avec mise à jour précise du stock')
+      setModal(null)
+      load()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Retour impossible')
+    } finally {
+      setReturnSaving(false)
+    }
+  }
+
+  const returnCreditBeforeDiscount = returnForm.items.reduce(
+    (sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.credit_unit) || 0), 0
+  )
+  const returnCredit = returnCreditBeforeDiscount * (1 - Number(selected?.discount || 0) / 100)
+  const exchangeTotal = returnForm.exchange_items.reduce(
+    (sum, item) => {
+      const base = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0)
+      const taxFactor = vatEnabled && (settings.price_tax_mode || 'exclusive') === 'exclusive'
+        ? 1 + Number(item.tax_rate || 0) / 100
+        : 1
+      return sum + base * taxFactor
+    }, 0
+  )
+  const exchangeDifference = exchangeTotal - returnCredit
+  const addExchangeItem = () => setReturnForm(form => ({
+    ...form,
+    exchange_items:[...form.exchange_items, { product_id:'', description:'', quantity:1, unit_price:0, tax_rate:0 }],
+  }))
+  const updateExchangeItem = (index, patch) => setReturnForm(form => ({
+    ...form,
+    exchange_items:form.exchange_items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item),
+  }))
+  const selectExchangeProduct = (index, productId) => {
+    const product = products.find(item => item.id === Number(productId))
+    updateExchangeItem(index, {
+      product_id:productId,
+      description:product?.name || '',
+      unit_price:Number(product?.sale_price || 0),
+      tax_rate:product?.tva_enabled ? Number(product.tax_rate || 0) : 0,
+      price_override_reason:'',
+    })
   }
 
   const handleConfirm = async (s) => {
@@ -181,11 +343,14 @@ export default function SalesPage() {
     } catch(e) { toast.error(e.response?.data?.detail || 'Conversion impossible') }
   }
   const handleDownload = async (s) => {
+    if (downloadingId === s.id) return
+    setDownloadingId(s.id)
     try {
       const { data } = await api.get(`/sales/${s.id}`)
-      downloadHtmlFile(`${data.number || 'document'}.html`, buildSalesDocumentHtml(data, settings))
-      toast.success('Document telecharge')
-    } catch(e) { toast.error(e.response?.data?.detail || 'Telechargement impossible') }
+      await downloadSalePdf(data, settings)
+      toast.success('PDF téléchargé')
+    } catch(e) { toast.error(e.response?.data?.detail || 'Téléchargement PDF impossible') }
+    finally { setDownloadingId(null) }
   }
   const exportList = () => {
     const rows = sales.map(s => ({
@@ -214,10 +379,13 @@ export default function SalesPage() {
   }
   const handlePayment = async () => {
     if (!payAmt || +payAmt <= 0) return toast.error('Montant invalide')
+    if (+payAmt > Number(selected.balance_due) + 0.001) return toast.error(`Le paiement ne peut pas dépasser le reste de ${fmt(selected.balance_due)} ${currency}`)
+    setPaymentSaving(true)
     try {
       await api.post(`/sales/${selected.id}/payment`, { amount: +payAmt, payment_mode: payMode }, { headers: operationHeaders(selected.version) })
       toast.success('Paiement enregistré'); setModal(null); load()
     } catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    finally { setPaymentSaving(false) }
   }
 
   // Line item helpers
@@ -228,17 +396,71 @@ export default function SalesPage() {
     items[i] = { ...items[i], [key]: val }
     if (key === 'product_id' && val) {
       const p = products.find(p => p.id === +val)
-      if (p) { items[i].unit_price = p.sale_price; items[i].purchase_price = p.purchase_price; items[i].tax_rate = p.tax_rate; items[i].description = p.name }
+      if (p) { items[i].unit_price = p.sale_price; items[i].purchase_price = p.purchase_price; items[i].tax_rate = vatEnabled ? p.tax_rate : 0; items[i].description = p.name }
     }
     return { ...f, items }
   })
+
+  const selectLineProduct = (index, value) => {
+    if (!value) {
+      setForm(current => ({
+        ...current,
+        items: current.items.map((item, itemIndex) => itemIndex === index ? {
+          ...item,
+          product_id: '',
+          description: '',
+          unit_price: 0,
+          purchase_price: 0,
+          product_type: undefined,
+          pricing_mode: undefined,
+        } : item),
+      }))
+      return
+    }
+    const product = products.find(item => item.id === Number(value))
+    if (!product) return
+    if (product.product_type === 'service') {
+      setServiceLineDraft({
+        index,
+        product,
+        quantity: 1,
+        unit_price: '',
+      })
+      return
+    }
+    updateItem(index, 'product_id', value)
+  }
+
+  const commitServiceLine = () => {
+    const quantity = Number(serviceLineDraft?.quantity)
+    const unitPrice = Number(String(serviceLineDraft?.unit_price || '').replace(',', '.'))
+    if (!Number.isInteger(quantity) || quantity <= 0) return toast.error('La quantité doit être un nombre entier positif')
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) return toast.error('Saisissez un prix par pcs strictement positif')
+    const { index, product } = serviceLineDraft
+    setForm(current => ({
+      ...current,
+      items: current.items.map((item, itemIndex) => itemIndex === index ? {
+        ...item,
+        product_id: product.id,
+        description: product.name,
+        quantity,
+        unit_price: unitPrice,
+        purchase_price: product.purchase_price,
+        tax_rate: vatEnabled ? product.tax_rate : 0,
+        product_type: 'service',
+        pricing_mode: product.pricing_mode,
+      } : item),
+    }))
+    setServiceLineDraft(null)
+  }
 
   // Totals
   const computeTotals = (items, discount) => {
     let sub = 0, tax = 0
     items.forEach(item => {
       const lt = (item.quantity||1) * (item.unit_price||0) * (1-(item.discount||0)/100)
-      sub += lt; tax += lt * (item.tax_rate ?? 0)/100
+      sub += lt
+      if (vatEnabled) tax += lt * (item.tax_rate ?? 0)/100
     })
     if (discount > 0) { const d = sub * discount/100; sub -= d; tax *= (1-discount/100) }
     return { subtotal: sub, tax_amount: tax, total: sub + tax }
@@ -267,6 +489,16 @@ export default function SalesPage() {
 
   const handleSave = async () => {
     if ((form.items||[]).length === 0) return toast.error('Ajoutez au moins une ligne')
+    const invalidLine = form.items.findIndex(item =>
+      !item.product_id
+      || !Number.isInteger(Number(item.quantity))
+      || Number(item.quantity) <= 0
+      || !Number.isFinite(Number(item.unit_price))
+      || Number(item.unit_price) <= 0
+      || Number(item.discount) < 0
+      || Number(item.discount) > 100
+    )
+    if (invalidLine >= 0) return toast.error(`Vérifiez le produit, la quantité, le prix et la remise de la ligne ${invalidLine + 1}`)
     setSaving(true)
     try {
       const payload = buildSalePayload(form)
@@ -280,7 +512,7 @@ export default function SalesPage() {
   }
 
   return (
-    <div className="page-content">
+    <div className="page-content sales-page">
       <div className="page-header">
         <h1 className="page-title">Ventes</h1>
         <div className="toolbar">
@@ -299,11 +531,30 @@ export default function SalesPage() {
       </div>
 
       <div className="card" style={{ padding:0 }}>
-        <div style={{ padding:'1rem', borderBottom:'1px solid var(--border)' }}>
-          <div className="search-wrap" style={{ maxWidth:340 }}>
+        <div className="sales-filters">
+          <div className="search-wrap sales-filter-search">
             <Search size={15} className="search-icon" />
             <input placeholder="Rechercher par numéro…" value={q} onChange={e => setQ(e.target.value)} />
           </div>
+          <select aria-label="Filtrer par statut" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Tous les statuts</option>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select aria-label="Filtrer par client" value={clientFilter} onChange={e => setClientFilter(e.target.value)}>
+            <option value="">Tous les clients</option>
+            {clients.map(client => <option key={client.id} value={client.id}>{client.name}</option>)}
+          </select>
+          <label className="sales-date-filter"><span>Du</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} /></label>
+          <label className="sales-date-filter"><span>Au</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} /></label>
+          {(q || statusFilter || clientFilter || dateFrom || dateTo) && (
+            <button className="btn btn-secondary sales-filter-reset" onClick={() => {
+              setQ('')
+              setStatusFilter('')
+              setClientFilter('')
+              setDateFrom('')
+              setDateTo('')
+            }}><RotateCcw size={15}/> Réinitialiser</button>
+          )}
         </div>
         <div className="table-wrap">
           <table>
@@ -318,7 +569,7 @@ export default function SalesPage() {
               ) : sales.length === 0 ? (
                 <tr><td colSpan={9}><div className="empty-state"><ShoppingCart size={40}/><p>Aucun document</p></div></td></tr>
               ) : sales.map(s => (
-                <tr key={s.id}>
+                <tr key={s.id} className={`document-row status-${s.status}`}>
                   <td><span className="font-mono text-sm">{s.number}</span></td>
                   <td>{s.client_name}</td>
                   <td className="text-muted text-sm">{fmtDate(s.date_time)}</td>
@@ -330,7 +581,9 @@ export default function SalesPage() {
                   <td>
                     <div className="flex gap-2">
                       <button className="btn btn-secondary btn-sm btn-icon" onClick={() => openView(s)} title="Voir"><Eye size={14}/></button>
-                      <button className="btn btn-secondary btn-sm btn-icon" onClick={() => handleDownload(s)} title="Telecharger"><Download size={14}/></button>
+                      <button className="btn btn-secondary btn-sm btn-icon" disabled={downloadingId === s.id} onClick={() => handleDownload(s)} title="Télécharger PDF">
+                        {downloadingId === s.id ? <span className="spinner" style={{width:14,height:14}}/> : <Download size={14}/>}
+                      </button>
                       {s.status === 'draft' && <>
                         <button className="btn btn-secondary btn-sm btn-icon" onClick={() => openEdit(s)} title="Modifier"><Edit2 size={14}/></button>
                         {s.doc_type === 'quote' && <button className="btn btn-primary btn-sm btn-icon" onClick={() => handleConvertQuote(s)} title="Convertir en facture"><FileCheck2 size={14}/></button>}
@@ -406,44 +659,57 @@ export default function SalesPage() {
               </div>
 
               {/* Items */}
-              <div style={{ marginBottom:'1rem' }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.75rem' }}>
+              <div className="sales-lines-section">
+                <div className="sales-lines-heading">
                   <h3>Lignes</h3>
                   <button className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14}/> Ajouter ligne</button>
                 </div>
-                <div style={{ overflowX:'auto' }}>
-                  <table style={{ fontSize:'.8rem' }}>
+                <div className="sales-lines-table-wrap">
+                  <table className="sales-lines-table">
                     <thead><tr>
-                      <th style={{ minWidth:180 }}>Produit / Description</th>
-                      <th style={{ width:70 }}>Qté</th>
-                      <th style={{ width:110 }}>Prix unit. HT</th>
-                      <th style={{ width:75 }}>Remise %</th>
-                      <th style={{ width:80 }}>TVA %</th>
-                      <th style={{ width:110 }}>Total HT</th>
-                      <th style={{ width:40 }}></th>
+                      <th>Produit</th>
+                      <th>Qté</th>
+                      <th>Prix unit. HT</th>
+                      <th>Remise %</th>
+                      {vatEnabled ? <th>TVA %</th> : null}
+                      <th>Total HT</th>
+                      <th aria-label="Actions"></th>
                     </tr></thead>
                     <tbody>
                       {form.items.map((item, i) => {
                         const lt = (item.quantity||1)*(item.unit_price||0)*(1-(item.discount||0)/100)
                         return (
                           <tr key={i}>
-                            <td>
-                              <select value={item.product_id||''} onChange={e => updateItem(i,'product_id',e.target.value)} style={{ marginBottom:'.25rem' }}>
+                            <td className="sales-line-product">
+                              <select value={item.product_id||''} onChange={e => selectLineProduct(i, e.target.value)}>
                                 <option value="">— Produit —</option>
                                 {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
-                              <input value={item.description||''} onChange={e => updateItem(i,'description',e.target.value)} placeholder="Description..." />
                             </td>
-                            <td><input type="number" min="0.01" step="0.01" value={item.quantity} onChange={e => updateItem(i,'quantity',+e.target.value||1)} /></td>
-                            <td><input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(i,'unit_price',+e.target.value||0)} /></td>
-                            <td><input type="number" min="0" max="100" value={item.discount} onChange={e => updateItem(i,'discount',+e.target.value||0)} /></td>
+                            <td className="sales-line-quantity"><input
+                              aria-label="Quantité"
+                              type="number"
+                              inputMode="numeric"
+                              min="1"
+                              step="1"
+                              value={item.quantity}
+                              onKeyDown={e => {
+                                if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+                              }}
+                              onChange={e => updateItem(i, 'quantity', Math.max(1, Math.trunc(Number(e.target.value) || 1)))}
+                            /></td>
                             <td>
-                              <select value={item.tax_rate} onChange={e => updateItem(i,'tax_rate',+e.target.value)}>
+                              <input aria-label="Prix unitaire HT" type="number" min="0.01" step="0.01" value={item.unit_price} onChange={e => updateItem(i,'unit_price',+e.target.value||0)} />
+                              {item.product_type === 'service' ? <small className="sales-service-unit">Prix / pcs</small> : null}
+                            </td>
+                            <td><input aria-label="Remise en pourcentage" type="number" min="0" max="100" value={item.discount} onChange={e => updateItem(i,'discount',+e.target.value||0)} /></td>
+                            {vatEnabled ? <td>
+                              <select aria-label="TVA" value={item.tax_rate} onChange={e => updateItem(i,'tax_rate',+e.target.value)}>
                                 {taxRates.map(r => <option key={r} value={r}>{r}%</option>)}
                               </select>
-                            </td>
-                            <td style={{ fontWeight:600 }}>{fmt(lt)} {currency}</td>
-                            <td><button className="btn btn-danger btn-sm btn-icon" onClick={() => removeItem(i)}><X size={12}/></button></td>
+                            </td> : null}
+                            <td className="sales-line-total">{fmt(lt)} {currency}</td>
+                            <td className="sales-line-remove"><button aria-label="Supprimer la ligne" title="Supprimer la ligne" className="btn btn-danger btn-sm btn-icon" onClick={() => removeItem(i)}><X size={14}/></button></td>
                           </tr>
                         )
                       })}
@@ -458,9 +724,9 @@ export default function SalesPage() {
                   <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}>
                     <span className="text-muted">Sous-total:</span><span>{fmt(totals.subtotal)} {currency}</span>
                   </div>
-                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}>
+                  {vatEnabled ? <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}>
                     <span className="text-muted">TVA:</span><span>{fmt(totals.tax_amount)} {currency}</span>
-                  </div>
+                  </div> : null}
                   <div style={{ display:'flex', justifyContent:'space-between', fontWeight:700, fontSize:'1.1rem', borderTop:'1px solid var(--border)', paddingTop:'.4rem', marginTop:'.2rem' }}>
                     <span>Total:</span><span style={{ color:'var(--accent)' }}>{fmt(totals.total)} {currency}</span>
                   </div>
@@ -474,6 +740,52 @@ export default function SalesPage() {
                 {saving ? <span className="spinner" style={{width:16,height:16}} /> : null}
                 {!selected ? 'Créer' : 'Enregistrer'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {serviceLineDraft && (
+        <div className="modal-overlay sales-service-overlay" onClick={event => event.target === event.currentTarget && setServiceLineDraft(null)}>
+          <div className="modal sales-service-modal">
+            <div className="modal-header">
+              <div><span className="sales-service-eyebrow">Service sans stock</span><h2>{serviceLineDraft.product.name}</h2></div>
+              <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setServiceLineDraft(null)}>✕</button>
+            </div>
+            <div className="modal-body sales-service-body">
+              <div className="sales-service-icon"><Sparkles size={26}/></div>
+              <p>Définissez le prix facturé à ce client pour chaque pcs.</p>
+              <div className="form-grid form-grid-2">
+                <div className="form-group">
+                  <label className="form-label">Quantité (pcs)</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={serviceLineDraft.quantity}
+                    onKeyDown={event => {
+                      if (['.', ',', 'e', 'E', '+', '-'].includes(event.key)) event.preventDefault()
+                    }}
+                    onChange={event => setServiceLineDraft(draft => ({
+                      ...draft,
+                      quantity: Math.max(1, Math.trunc(Number(event.target.value) || 1)),
+                    }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Prix pour 1 pcs ({currency})</label>
+                  <input autoFocus type="number" min="0.01" step="0.01" value={serviceLineDraft.unit_price} onChange={event => setServiceLineDraft(draft => ({ ...draft, unit_price:event.target.value }))}/>
+                </div>
+              </div>
+              <div className="sales-service-total">
+                <span>Total HT</span>
+                <strong>{fmt(Number(String(serviceLineDraft.quantity).replace(',', '.')) * Number(String(serviceLineDraft.unit_price).replace(',', '.')) || 0)} {currency}</strong>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setServiceLineDraft(null)}>Annuler</button>
+              <button className="btn btn-primary" onClick={commitServiceLine}><Plus size={15}/> Ajouter à la facture</button>
             </div>
           </div>
         </div>
@@ -503,7 +815,7 @@ export default function SalesPage() {
               </div>
               <div className="table-wrap" style={{ marginBottom:'1rem' }}>
                 <table style={{ fontSize:'.875rem' }}>
-                  <thead><tr><th>Description</th><th>Qté</th><th>Prix HT</th><th>Remise</th><th>TVA</th><th>Total HT</th></tr></thead>
+                  <thead><tr><th>Description</th><th>Qté</th><th>Prix</th><th>Remise</th>{vatEnabled ? <th>TVA</th> : null}<th>Total</th></tr></thead>
                   <tbody>
                     {selected.items.map(i => (
                       <tr key={i.id}>
@@ -511,7 +823,7 @@ export default function SalesPage() {
                         <td>{i.quantity}</td>
                         <td>{fmt(i.unit_price)} MAD</td>
                         <td>{i.discount}%</td>
-                        <td>{i.tax_rate}%</td>
+                        {vatEnabled ? <td>{i.tax_rate}%</td> : null}
                         <td className="font-semibold">{fmt(i.line_total)} MAD</td>
                       </tr>
                     ))}
@@ -521,8 +833,8 @@ export default function SalesPage() {
               <div style={{ display:'flex', justifyContent:'flex-end' }}>
                 <div style={{ minWidth:280, display:'flex', flexDirection:'column', gap:'.4rem' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}><span className="text-muted">Sous-total:</span><span>{fmt(selected.subtotal)} {selected.currency_code || currency}</span></div>
-                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}><span className="text-muted">TVA:</span><span>{fmt(selected.tax_amount)} {selected.currency_code || currency}</span></div>
-                  {(selected.tax_breakdown || []).map(row => <div key={row.rate} style={{ display:'flex', justifyContent:'space-between', fontSize:'.8rem' }}><span className="text-muted">TVA {fmt(row.rate)}%</span><span>{fmt(row.tax_amount)} {selected.currency_code || currency}</span></div>)}
+                  {vatEnabled ? <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}><span className="text-muted">TVA:</span><span>{fmt(selected.tax_amount)} {selected.currency_code || currency}</span></div> : null}
+                  {vatEnabled ? (selected.tax_breakdown || []).map(row => <div key={row.rate} style={{ display:'flex', justifyContent:'space-between', fontSize:'.8rem' }}><span className="text-muted">TVA {fmt(row.rate)}%</span><span>{fmt(row.tax_amount)} {selected.currency_code || currency}</span></div>) : null}
                   <div style={{ display:'flex', justifyContent:'space-between', fontWeight:700, fontSize:'1.1rem', borderTop:'1px solid var(--border)', paddingTop:'.4rem' }}>
                     <span>Total TTC:</span><span style={{ color:'var(--accent)' }}>{fmt(selected.total_amount)} MAD</span>
                   </div>
@@ -554,13 +866,16 @@ export default function SalesPage() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={printDocument}>
-                <Printer size={15} /> PDF / Imprimer
+              <button className="btn btn-secondary" onClick={printDocument} disabled={previewingPdf}>
+                {previewingPdf ? <span className="spinner" style={{width:15,height:15}}/> : <Printer size={15}/>} PDF / Imprimer
               </button>
               {selected.doc_type === 'invoice' && (
                 <button className="btn btn-secondary" onClick={printTicket}>
                   <Printer size={15} /> Ticket POS
                 </button>
+              )}
+              {selected.doc_type === 'invoice' && ['confirmed', 'partially_paid', 'paid'].includes(selected.status) && (
+                <button className="btn btn-secondary" onClick={openReturn}>Retour / échange</button>
               )}
               <button className="btn btn-secondary" onClick={() => setModal(null)}>Fermer</button>
               {['confirmed', 'partially_paid'].includes(selected.status) && selected.balance_due > 0 && (
@@ -570,11 +885,98 @@ export default function SalesPage() {
               )}
             </div>
             {printTarget === 'document' && <PrintableSalesDocument sale={selected} settings={settings} />}
-            {printTarget === 'ticket' && (
-              <div className="thermal-print-active">
-                <ThermalReceipt sale={selected} settings={settings} language={language} />
-              </div>
+            {printTarget === 'ticket' && createPortal(
+              <ThermalReceiptPrintDocument sale={selected} settings={settings} language={language} />,
+              document.body,
             )}
+          </div>
+        </div>
+      )}
+
+      {modal === 'return' && selected && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setModal('view')}>
+          <div className="modal">
+            <div className="modal-header"><h2>Retour — {selected.number}</h2><button className="btn btn-secondary btn-icon" onClick={() => setModal('view')}>✕</button></div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Traitement</label>
+                <select value={returnForm.resolution} onChange={e => setReturnForm(f => ({ ...f, resolution:e.target.value }))}>
+                  <option value="exchange">Échange</option>
+                  <option value="credit">Avoir client</option>
+                  <option value="refund">Remboursement à traiter</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Motif *</label>
+                <textarea value={returnForm.reason} onChange={e => setReturnForm(f => ({ ...f, reason:e.target.value }))} rows={2} />
+              </div>
+              <div className="return-help">
+                Le stock n'est augmenté que pour un article déclaré <strong>revendable</strong>.
+                Les services et les articles endommagés restent hors stock.
+              </div>
+              <div className="table-wrap return-table">
+                <table><thead><tr><th>Article</th><th>Vendu</th><th>À retourner</th><th>État</th><th>Stock</th></tr></thead>
+                  <tbody>{returnForm.items.map((item, index) => (
+                    <tr key={item.sale_item_id}>
+                      <td>{item.name}</td><td>{item.max}</td>
+                      <td><input type="number" min="0" max={item.max} step="1" value={item.quantity} onChange={e => setReturnForm(f => ({ ...f, items:f.items.map((row, i) => i === index ? { ...row, quantity:e.target.value } : row) }))} /></td>
+                      <td>
+                        <select
+                          value={item.condition}
+                          disabled={item.product_type === 'service'}
+                          onChange={e => setReturnForm(f => ({ ...f, items:f.items.map((row, i) => i === index ? {
+                            ...row,
+                            condition:e.target.value,
+                            restock:e.target.value === 'resalable',
+                          } : row) }))}
+                        >
+                          <option value="resalable">Revendable</option>
+                          <option value="damaged">Endommagé</option>
+                        </select>
+                      </td>
+                      <td>
+                        <span className={`return-stock-badge ${item.restock && item.condition === 'resalable' ? 'in' : 'out'}`}>
+                          {item.product_type === 'service' ? 'Sans stock' : item.restock && item.condition === 'resalable' ? 'Réintégré' : 'Non réintégré'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {returnForm.resolution === 'exchange' && (
+                <section className="exchange-panel">
+                  <div className="exchange-panel-header">
+                    <div><strong>Articles de remplacement</strong><span>Une facture liée sera créée automatiquement.</span></div>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={addExchangeItem}><Plus size={15}/> Ajouter</button>
+                  </div>
+                  {returnForm.exchange_items.map((item, index) => (
+                    <div className="exchange-line" key={index}>
+                      <select value={item.product_id} onChange={e => selectExchangeProduct(index, e.target.value)}>
+                        <option value="">— Produit de remplacement —</option>
+                        {products.filter(product => product.is_active).map(product => (
+                          <option key={product.id} value={product.id}>{product.name}</option>
+                        ))}
+                      </select>
+                      <input aria-label="Quantité de remplacement" type="number" min="1" step="1" value={item.quantity} onChange={e => updateExchangeItem(index, { quantity:e.target.value })}/>
+                      <input aria-label="Prix unitaire de remplacement" type="number" min="0" step=".01" value={item.unit_price} onChange={e => updateExchangeItem(index, { unit_price:e.target.value, price_override_reason:'Prix convenu pour échange' })}/>
+                      <strong>{fmt((Number(item.quantity) || 0) * (Number(item.unit_price) || 0))} {currency}</strong>
+                      <button type="button" className="btn btn-danger btn-icon" onClick={() => setReturnForm(form => ({ ...form, exchange_items:form.exchange_items.filter((_, i) => i !== index) }))}><X size={16}/></button>
+                    </div>
+                  ))}
+                </section>
+              )}
+              <div className="return-summary">
+                <div><span>Valeur du retour</span><strong>{fmt(returnCredit)} {currency}</strong></div>
+                {returnForm.resolution === 'exchange' && <>
+                  <div><span>Valeur du remplacement</span><strong>{fmt(exchangeTotal)} {currency}</strong></div>
+                  <div className={exchangeDifference > 0 ? 'customer-pays' : exchangeDifference < 0 ? 'customer-refund' : 'balanced'}>
+                    <span>{exchangeDifference > 0 ? 'À payer par le client' : exchangeDifference < 0 ? 'À rembourser au client' : 'Différence'}</span>
+                    <strong>{fmt(Math.abs(exchangeDifference))} {currency}</strong>
+                  </div>
+                </>}
+              </div>
+            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={() => setModal('view')}>Annuler</button><button className="btn btn-primary" disabled={returnSaving} onClick={submitReturn}>{returnSaving ? <span className="spinner"/> : <RotateCcw size={16}/>} Confirmer le retour</button></div>
           </div>
         </div>
       )}
@@ -601,7 +1003,10 @@ export default function SalesPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setModal(null)}>Annuler</button>
-              <button className="btn btn-success" onClick={handlePayment}><Check size={15}/> Confirmer paiement</button>
+              <button className="btn btn-success" onClick={handlePayment} disabled={paymentSaving}>
+                {paymentSaving ? <span className="spinner" style={{ width:15, height:15 }}/> : <Check size={15}/>}
+                Confirmer paiement
+              </button>
             </div>
           </div>
         </div>
@@ -656,6 +1061,7 @@ function downloadHtmlFile(filename, html) {
 
 function buildSalesDocumentHtml(sale, settings) {
   const currency = settings.currency || 'MAD'
+  const vatEnabled = isVatEnabled(settings)
   const title = DOC_TITLES[sale.doc_type] || 'Document'
   const logoUrl = getLogoUrl(settings)
   const rows = (sale.items || []).map(item => `
@@ -664,7 +1070,7 @@ function buildSalesDocumentHtml(sale, settings) {
       <td>${fmt(item.quantity, 0)}</td>
       <td>${fmt(item.unit_price)} ${currency}</td>
       <td>${fmt(item.discount)}%</td>
-      <td>${fmt(item.tax_rate)}%</td>
+      ${vatEnabled ? `<td>${fmt(item.tax_rate)}%</td>` : ''}
       <td>${fmt(item.line_total)} ${currency}</td>
     </tr>
   `).join('')
@@ -675,9 +1081,9 @@ function buildSalesDocumentHtml(sale, settings) {
 <body><main class="sheet">
   <header><div class="brand"><img src="${escapeHtml(logoUrl)}" alt=""><div><strong>${escapeHtml(getCompanyName(settings))}</strong><span>${escapeHtml(settings.address || '')}</span><span>${escapeHtml(settings.phone || '')}</span></div></div><div class="meta"><h1>${escapeHtml(title)}</h1><b>${escapeHtml(sale.number)}</b><span>Date: ${fmtDate(sale.date_time)}</span><span>Utilisateur: ${escapeHtml(sale.created_by_name || '-')}</span></div></header>
   <section class="parties"><div><h2>Client</h2><b>${escapeHtml(sale.client_name || 'Client comptoir')}</b></div><div><h2>Paiement</h2><span>Mode: ${escapeHtml(paymentModeLabel(sale.payment_mode))}</span><span>Paye: ${fmt(sale.paid_amount)} ${currency}</span><span>Reste: ${fmt(sale.balance_due)} ${currency}</span></div></section>
-  <table><thead><tr><th>Designation</th><th>Qte</th><th>PU HT</th><th>Remise</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table>
-  <section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(sale.notes || settings.invoice_notes || 'Merci pour votre confiance.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(sale.subtotal)} ${currency}</b></p><p><span>TVA</span><b>${fmt(sale.tax_amount)} ${currency}</b></p><p class="total"><span>Total TTC</span><b>${fmt(sale.total_amount)} ${currency}</b></p></aside></section>
-  <footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(sale.created_by_name || 'Maktaba Print')}</footer>
+  <table><thead><tr><th>Designation</th><th>Qte</th><th>PU</th><th>Remise</th>${vatEnabled ? '<th>TVA</th>' : ''}<th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+  <section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(sale.notes || settings.invoice_notes || 'Merci pour votre confiance.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(sale.subtotal)} ${currency}</b></p>${vatEnabled ? `<p><span>TVA</span><b>${fmt(sale.tax_amount)} ${currency}</b></p>` : ''}<p class="total"><span>Total</span><b>${fmt(sale.total_amount)} ${currency}</b></p></aside></section>
+  <footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(sale.created_by_name || 'LIBRARY SABRI')}</footer>
 </main></body></html>`
 }
 
@@ -687,6 +1093,7 @@ function documentPrintCss() {
 
 function PrintableSalesDocument({ sale, settings }) {
   const currency = settings.currency || 'MAD'
+  const vatEnabled = isVatEnabled(settings)
   const title = DOC_TITLES[sale.doc_type] || 'Document'
   const clientLabel = sale.client_name && sale.client_name !== '—' ? sale.client_name : 'Client comptoir'
   const amountDue = Math.max(Number(sale.balance_due || 0), 0)
@@ -739,10 +1146,10 @@ function PrintableSalesDocument({ sale, settings }) {
             <tr>
               <th>Désignation</th>
               <th>Qté</th>
-              <th>PU HT</th>
+              <th>PU</th>
               <th>Remise</th>
-              <th>TVA</th>
-              <th>Total HT</th>
+              {vatEnabled ? <th>TVA</th> : null}
+              <th>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -752,7 +1159,7 @@ function PrintableSalesDocument({ sale, settings }) {
                 <td>{fmt(item.quantity, 0)}</td>
                 <td>{fmt(item.unit_price)} {currency}</td>
                 <td>{fmt(item.discount)}%</td>
-                <td>{fmt(item.tax_rate)}%</td>
+                {vatEnabled ? <td>{fmt(item.tax_rate)}%</td> : null}
                 <td>{fmt(item.line_total)} {currency}</td>
               </tr>
             ))}
@@ -766,16 +1173,16 @@ function PrintableSalesDocument({ sale, settings }) {
           </div>
           <div className="print-totals">
             <div><span>Sous-total HT</span><strong>{fmt(sale.subtotal)} {currency}</strong></div>
-            <div><span>TVA</span><strong>{fmt(sale.tax_amount)} {currency}</strong></div>
+            {vatEnabled ? <div><span>TVA</span><strong>{fmt(sale.tax_amount)} {currency}</strong></div> : null}
             {Number(sale.discount || 0) > 0 && (
               <div><span>Remise globale</span><strong>{fmt(sale.discount)}%</strong></div>
             )}
-            <div className="print-grand-total"><span>Total TTC</span><strong>{fmt(sale.total_amount)} {currency}</strong></div>
+            <div className="print-grand-total"><span>Total</span><strong>{fmt(sale.total_amount)} {currency}</strong></div>
           </div>
         </section>
 
         <footer className="print-footer">
-          <span>{settings.name || 'Maktaba Print'} - Document généré par {sale.created_by_name || 'Maktaba Print'}</span>
+          <span>{settings.name || 'LIBRARY SABRI'} - Document généré par {sale.created_by_name || 'LIBRARY SABRI'}</span>
         </footer>
       </div>
     </div>

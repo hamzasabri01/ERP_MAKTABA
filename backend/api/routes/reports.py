@@ -285,6 +285,108 @@ def _stock_value_detail(db: Session, limit: int = 120):
     }
 
 
+def _top_items(db: Session, start: date, end: date, limit: int = 12):
+    rows = db.query(
+        SaleItem.product_id,
+        func.coalesce(func.max(Product.name), func.max(SaleItem.description), "—").label("name"),
+        func.coalesce(func.max(Product.product_type), "product").label("product_type"),
+        func.sum(SaleItem.quantity).label("quantity"),
+        func.sum(SaleItem.line_total).label("revenue"),
+        func.sum(SaleItem.quantity * SaleItem.purchase_price).label("cost"),
+    ).join(Sale, Sale.id == SaleItem.sale_id
+    ).join(Product, Product.id == SaleItem.product_id, isouter=True
+    ).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+        *_between_dates(Sale.date_time, start, end),
+    ).group_by(SaleItem.product_id).order_by(func.sum(SaleItem.quantity).desc()).limit(limit).all()
+    return [{
+        "product_id": row.product_id,
+        "name": row.name,
+        "product_type": row.product_type,
+        "quantity": float(row.quantity or 0),
+        "revenue": quantize_money(row.revenue or 0),
+        "gross_profit": quantize_money((row.revenue or 0) - (row.cost or 0)),
+    } for row in rows]
+
+
+def _hourly_performance(db: Session, start: date, end: date):
+    hour_expr = func.strftime("%H", Sale.date_time)
+    rows = db.query(
+        hour_expr.label("hour"),
+        func.count(Sale.id).label("sales_count"),
+        func.sum(Sale.total_amount).label("revenue"),
+    ).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+        *_between_dates(Sale.date_time, start, end),
+    ).group_by(hour_expr).all()
+    by_hour = {int(row.hour): row for row in rows if row.hour is not None}
+    return [{
+        "hour": f"{hour:02d}:00",
+        "sales_count": int(by_hour[hour].sales_count or 0) if hour in by_hour else 0,
+        "revenue": quantize_money(by_hour[hour].revenue or 0) if hour in by_hour else quantize_money(0),
+    } for hour in range(7, 23)]
+
+
+def _dormant_products(db: Session, inactivity_days: int = 60, limit: int = 30):
+    cutoff = date.today() - timedelta(days=inactivity_days)
+    last_sale = db.query(
+        SaleItem.product_id.label("product_id"),
+        func.max(Sale.date_time).label("last_sale_at"),
+    ).join(Sale, Sale.id == SaleItem.sale_id).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+    ).group_by(SaleItem.product_id).subquery()
+    rows = db.query(Product, last_sale.c.last_sale_at).outerjoin(
+        last_sale, last_sale.c.product_id == Product.id,
+    ).filter(
+        Product.is_active == 1,
+        Product.product_type == "product",
+        Product.stock_quantity > 0,
+        (last_sale.c.last_sale_at.is_(None)) | (func.date(last_sale.c.last_sale_at) < cutoff),
+    ).order_by(last_sale.c.last_sale_at.asc()).limit(limit).all()
+    return [{
+        "product_id": product.id,
+        "code": product.code or "",
+        "name": product.name,
+        "stock": float(product.stock_quantity or 0),
+        "stock_value": quantize_money((product.stock_quantity or 0) * (product.purchase_price or 0)),
+        "last_sale_at": last_at.isoformat() if last_at else None,
+        "inactive_days": (date.today() - last_at.date()).days if last_at else None,
+    } for product, last_at in rows]
+
+
+def _business_comparisons(db: Session):
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    month_start = today.replace(day=1)
+    previous_month_end = month_start - timedelta(days=1)
+    previous_month_start = previous_month_end.replace(day=1)
+    today_data = _build_summary(db, today, today)
+    yesterday_data = _build_summary(db, yesterday, yesterday)
+    month_data = _build_summary(db, month_start, today)
+    comparable_previous_end = min(
+        previous_month_start + timedelta(days=(today - month_start).days),
+        previous_month_end,
+    )
+    previous_month_data = _build_summary(db, previous_month_start, comparable_previous_end)
+    return {
+        "today": today_data,
+        "yesterday": yesterday_data,
+        "today_vs_yesterday": {
+            key: _variation(today_data[key], yesterday_data[key])
+            for key in ("revenue", "sale_count", "net_profit")
+        },
+        "month": month_data,
+        "previous_month": previous_month_data,
+        "month_vs_previous": {
+            key: _variation(month_data[key], previous_month_data[key])
+            for key in ("revenue", "sale_count", "net_profit")
+        },
+    }
+
+
 def _render_report_html(settings: dict, req: ReportEmailRequest, start: date, end: date, data: dict):
     company = html.escape(settings.get("name") or settings.get("store_name") or "Maktaba Print")
     currency = html.escape(settings.get("currency") or "MAD")
@@ -463,10 +565,16 @@ def profit_report(period: str = "month", db: Session = Depends(get_db), user=Dep
 
 
 @router.get("/overview")
-def reports_overview(period: str = "monthly", db: Session = Depends(get_db), user=Depends(get_current_user)):
+def reports_overview(
+    period: str = "monthly",
+    start_date: str = None,
+    end_date: str = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     period_map = {"day": "daily", "week": "weekly", "month": "monthly", "year": "yearly"}
     period_type = period_map.get(period, period)
-    start, end = _date_range(period_type)
+    start, end = _date_range(period_type, start_date, end_date)
     prev_start, prev_end = _period_comparison_range(start, end)
 
     summary = _build_summary(db, start, end)
@@ -497,6 +605,10 @@ def reports_overview(period: str = "monthly", db: Session = Depends(get_db), use
         "stock": stock,
         "categories": categories,
         "timeseries": timeseries,
+        "top_items": _top_items(db, start, end),
+        "dormant_products": _dormant_products(db),
+        "hourly_performance": _hourly_performance(db, start, end),
+        "comparisons": _business_comparisons(db),
     }
 
 

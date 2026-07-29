@@ -1,12 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
 const ThemeCtx = createContext(null)
-const STORAGE_KEY = 'proerp-theme'
+const STORAGE_KEY = 'library-sabri-theme-v2'
 
 function getInitialTheme() {
   const saved = localStorage.getItem(STORAGE_KEY)
   if (saved === 'light' || saved === 'dark') return saved
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+  return 'light'
 }
 
 export function ThemeProvider({ children }) {

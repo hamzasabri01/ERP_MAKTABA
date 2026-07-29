@@ -7,8 +7,8 @@ function color(value, fallback) {
 
 export function getVisualIdentity(settings = {}) {
   return {
-    primary: color(settings.brand_primary_color, '#2563EB'),
-    secondary: color(settings.brand_secondary_color, '#0891B2'),
+    primary: color(settings.brand_primary_color, '#1769E0'),
+    secondary: color(settings.brand_secondary_color, '#F59E0B'),
     success: color(settings.brand_success_color, '#16A34A'),
     document: color(settings.brand_document_color, '#111827'),
     logoSize: Math.min(Math.max(Number(settings.brand_print_logo_size || 42), 28), 96),
@@ -20,6 +20,9 @@ export function applyVisualIdentity(settings = {}) {
   const root = document.documentElement
   root.style.setProperty('--accent', identity.primary)
   root.style.setProperty('--accent2', identity.secondary)
+  root.style.setProperty('--brand-primary', identity.primary)
+  root.style.setProperty('--brand-secondary', identity.secondary)
+  root.style.setProperty('--accent-glow', `color-mix(in srgb, ${identity.primary} 15%, transparent)`)
   root.style.setProperty('--success', identity.success)
   root.style.setProperty('--brand-document-color', identity.document)
   root.style.setProperty('--brand-print-logo-size', `${identity.logoSize}px`)

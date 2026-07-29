@@ -5,7 +5,7 @@ from sqlalchemy import func, and_
 from datetime import datetime, timedelta, date
 from core.database import get_db
 from core.security import get_current_user
-from models.sales import Sale
+from models.sales import Sale, SaleItem
 from models.product import Product
 from models.client import Client
 from models.expense import Expense
@@ -42,14 +42,20 @@ def get_kpis(db: Session = Depends(get_db), user=Depends(get_current_user)):
         func.date(Expense.date) >= first_of_month,
     ).scalar() or ZERO
 
-    # Purchases this month
+    # Purchases this month (cash-flow information, not cost of goods sold)
     month_purchases = db.query(func.sum(Purchase.total_amount)).filter(
         Purchase.status.in_(ACTIVE_PURCHASE_STATUSES),
         func.date(Purchase.date_time) >= first_of_month,
     ).scalar() or ZERO
 
-    # Profit (revenue - purchases cost - expenses)
-    month_profit = month_revenue - month_purchases - month_expenses
+    month_cogs = db.query(func.sum(SaleItem.purchase_price * SaleItem.quantity)).join(Sale).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+        func.date(Sale.date_time) >= first_of_month,
+    ).scalar() or ZERO
+
+    # Real accounting profit: revenue - cost of items actually sold - expenses.
+    month_profit = month_revenue - month_cogs - month_expenses
 
     # Pending invoices (unpaid)
     pending_count = db.query(func.count(Sale.id)).filter(
@@ -94,6 +100,7 @@ def get_kpis(db: Session = Depends(get_db), user=Depends(get_current_user)):
         "today_revenue":       quantize_money(today_revenue),
         "month_expenses":      quantize_money(month_expenses),
         "month_purchases":     quantize_money(month_purchases),
+        "month_cogs":          quantize_money(month_cogs),
         "month_profit":        quantize_money(month_profit),
         "pending_invoices":    pending_count,
         "pending_amount":      quantize_money(max(pending_amount, 0)),

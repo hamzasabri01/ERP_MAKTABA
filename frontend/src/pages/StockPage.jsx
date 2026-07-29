@@ -1,6 +1,7 @@
 // src/pages/StockPage.jsx
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { api, fmt, fmtDateTime, idempotencyHeaders, operationHeaders } from '../lib/api'
+import QRCode from 'qrcode'
 import {
   Activity,
   AlertTriangle,
@@ -14,6 +15,10 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  ShoppingCart,
+  Smartphone,
+  Wifi,
+  X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TableLoadingRow } from '../components/ui/LoadingStates'
@@ -34,7 +39,7 @@ export default function StockPage() {
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(EMPTY_ADJUST)
   const [saving, setSaving] = useState(false)
-  const [lowOnly, setLowOnly] = useState(false)
+  const [stockFilter, setStockFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [movementType, setMovementType] = useState('')
   const [selectedProductId, setSelectedProductId] = useState('')
@@ -43,13 +48,21 @@ export default function StockPage() {
   const [inventoryRows, setInventoryRows] = useState([])
   const [inventorySession, setInventorySession] = useState(null)
   const [inventoryQuery, setInventoryQuery] = useState('')
+  const [inventoryBarcode, setInventoryBarcode] = useState('')
   const [inventorySaving, setInventorySaving] = useState(false)
+  const [reorderOpen, setReorderOpen] = useState(false)
+  const [reorderData, setReorderData] = useState(null)
+  const [reorderLoading, setReorderLoading] = useState(false)
+  const [inventoryScanner, setInventoryScanner] = useState(null)
+  const [inventoryScannerOpen, setInventoryScannerOpen] = useState(false)
+  const inventoryScannerCursor = useRef(0)
+  const inventoryScannedProducts = useRef(new Set())
 
   const load = useCallback(async (soft = false) => {
     if (soft) setRefreshing(true)
     else setLoading(true)
     try {
-      const productParams = { product_type: 'product', limit: 800, low_stock: lowOnly || undefined }
+      const productParams = { product_type: 'product', limit: 800 }
       const movementParams = {
         limit: 300,
         product_id: selectedProductId || undefined,
@@ -71,7 +84,7 @@ export default function StockPage() {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [lowOnly, movementType, selectedProductId])
+  }, [movementType, selectedProductId])
 
   useEffect(() => { load() }, [load])
 
@@ -83,13 +96,19 @@ export default function StockPage() {
 
   const filteredProducts = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return products
-    return products.filter(product =>
-      product.name?.toLowerCase().includes(q)
-      || product.code?.toLowerCase().includes(q)
-      || product.barcode?.toLowerCase().includes(q)
-    )
-  }, [products, query])
+    return products.filter(product => {
+      const matchesText = !q
+        || product.name?.toLowerCase().includes(q)
+        || product.code?.toLowerCase().includes(q)
+        || product.barcode?.toLowerCase().includes(q)
+      const quantity = Number(product.stock_quantity || 0)
+      const matchesStatus = stockFilter === 'all'
+        || (stockFilter === 'out' && quantity <= 0)
+        || (stockFilter === 'low' && product.is_low_stock && quantity > 0)
+        || (stockFilter === 'healthy' && !product.is_low_stock && quantity > 0)
+      return matchesText && matchesStatus
+    })
+  }, [products, query, stockFilter])
 
   const selectedProduct = products.find(product => String(product.id) === String(form.product_id))
   const projectedStock = useMemo(() => {
@@ -145,6 +164,7 @@ export default function StockPage() {
       }, { headers: idempotencyHeaders() })
       setInventorySession(data)
       setInventoryRows(data.lines.map(line => ({
+        barcode: selected.find(product => product.id === line.product_id)?.barcode || '',
         product_id: line.product_id,
         code: line.product_code,
         name: line.product_name,
@@ -154,6 +174,8 @@ export default function StockPage() {
         movement_id: line.movement_id,
       })))
       setInventoryQuery('')
+      setInventoryBarcode('')
+      inventoryScannedProducts.current = new Set()
       setInventoryOpen(true)
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Impossible de demarrer l’inventaire')
@@ -174,13 +196,108 @@ export default function StockPage() {
   const inventoryDiff = useMemo(() => inventoryRows.reduce((acc, row) => {
     const diff = Number(row.quantity || 0) - Number(row.current || 0)
     if (diff !== 0) acc.changed += 1
+    if (diff > 0) acc.surplus += diff
+    if (diff < 0) acc.shortage += Math.abs(diff)
     acc.totalDiff += diff
     return acc
-  }, { changed: 0, totalDiff: 0 }), [inventoryRows])
+  }, { changed: 0, totalDiff: 0, surplus: 0, shortage: 0 }), [inventoryRows])
 
   const updateInventoryQty = (productId, quantity) => {
     setInventoryRows(rows => rows.map(row => row.product_id === productId ? { ...row, quantity } : row))
   }
+
+  const applyInventoryBarcode = useCallback(rawValue => {
+    const value = String(rawValue || '').trim().toLowerCase()
+    if (!value) return
+    const row = inventoryRows.find(item =>
+      item.barcode?.toLowerCase() === value || item.code?.toLowerCase() === value
+    )
+    if (!row) {
+      toast.error('Code-barres introuvable dans cet inventaire')
+      return
+    }
+    const alreadyScanned = inventoryScannedProducts.current.has(row.product_id)
+    const nextQuantity = alreadyScanned ? Number(row.quantity || 0) + 1 : 1
+    inventoryScannedProducts.current.add(row.product_id)
+    updateInventoryQty(row.product_id, nextQuantity)
+    setInventoryQuery(row.code || row.name)
+    setInventoryBarcode('')
+    toast.success(`${row.name}: ${fmt(nextQuantity, 2)}`, { duration: 900 })
+  }, [inventoryRows])
+
+  const handleInventoryBarcode = event => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    applyInventoryBarcode(inventoryBarcode)
+  }
+
+  const openReorderSuggestions = async () => {
+    setReorderOpen(true)
+    setReorderLoading(true)
+    try {
+      const { data } = await api.get('/stock/reorder-suggestions')
+      setReorderData(data)
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de calculer le réapprovisionnement')
+    } finally {
+      setReorderLoading(false)
+    }
+  }
+
+  const openInventoryPhoneScanner = async () => {
+    if (inventoryScanner?.token) {
+      setInventoryScannerOpen(true)
+      return
+    }
+    try {
+      const { data } = await api.post('/mobile-scanner/sessions')
+      const current = new URL(window.location.href)
+      const localHost = ['localhost', '127.0.0.1', '::1'].includes(current.hostname)
+      const host = localHost ? data.lan_ip : current.hostname
+      const basePath = window.location.pathname.startsWith('/erp') ? '/erp' : ''
+      const localUrl = `${current.protocol}//${host}${current.port ? `:${current.port}` : ''}${basePath}/mobile-scanner?session=${encodeURIComponent(data.token)}`
+      const scannerUrl = data.public_url
+        ? `${String(data.public_url).replace(/\/$/, '')}/mobile-scanner?session=${encodeURIComponent(data.token)}`
+        : localUrl
+      const qrDataUrl = await QRCode.toDataURL(scannerUrl, {
+        width: 280, margin: 1,
+        color: { dark: '#102b58', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      })
+      inventoryScannerCursor.current = 0
+      setInventoryScanner({ ...data, url: scannerUrl, qrDataUrl, connected: false })
+      setInventoryScannerOpen(true)
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de connecter le scanner téléphone')
+    }
+  }
+
+  useEffect(() => {
+    if (!inventoryScanner?.token || !inventoryOpen) return undefined
+    let stopped = false
+    const poll = async () => {
+      try {
+        const { data } = await api.get(`/mobile-scanner/sessions/${inventoryScanner.token}/events`, {
+          params: { after: inventoryScannerCursor.current },
+        })
+        if (stopped) return
+        setInventoryScanner(current => current ? { ...current, connected: Boolean(data.connected) } : current)
+        for (const event of data.events || []) {
+          inventoryScannerCursor.current = Math.max(inventoryScannerCursor.current, Number(event.id || 0))
+          applyInventoryBarcode(event.barcode)
+        }
+      } catch (error) {
+        if (!stopped && error.response?.status === 404) {
+          setInventoryScanner(null)
+          setInventoryScannerOpen(false)
+          toast.error('Session scanner expirée')
+        }
+      }
+    }
+    poll()
+    const timer = window.setInterval(poll, 900)
+    return () => { stopped = true; window.clearInterval(timer) }
+  }, [inventoryScanner?.token, inventoryOpen, applyInventoryBarcode])
 
   const handleInventoryCount = async () => {
     if (!inventorySession) return
@@ -244,6 +361,9 @@ export default function StockPage() {
           <button className="btn btn-secondary" onClick={openInventory} disabled={loading || products.length === 0}>
             {inventorySaving && !inventoryOpen ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <ClipboardList size={16} />} Inventaire
           </button>
+          <button className="btn btn-secondary" onClick={openReorderSuggestions}>
+            <ShoppingCart size={16} /> Réapprovisionnement
+          </button>
           <button className="btn btn-primary" onClick={() => openAdjust()}><Plus size={16} /> Mouvement stock</button>
         </div>
       </div>
@@ -285,8 +405,16 @@ export default function StockPage() {
           <Search size={15} className="search-icon" />
           <input placeholder="Rechercher produit, code, code-barres..." value={query} onChange={e => setQuery(e.target.value)} />
         </div>
-        <button className={`btn btn-sm ${!lowOnly ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setLowOnly(false)}>Tous</button>
-        <button className={`btn btn-sm ${lowOnly ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setLowOnly(true)}>Stock faible</button>
+        <div className="stock-status-tabs" aria-label="Filtrer les niveaux de stock">
+          {[
+            ['all', 'Tous'],
+            ['healthy', 'Disponible'],
+            ['low', 'Faible'],
+            ['out', 'Rupture'],
+          ].map(([value, label]) => (
+            <button key={value} className={stockFilter === value ? 'active' : ''} onClick={() => setStockFilter(value)}>{label}</button>
+          ))}
+        </div>
         <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)}>
           <option value="">Tous les mouvements</option>
           {products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
@@ -469,6 +597,32 @@ export default function StockPage() {
                   <strong>{inventoryDiff.totalDiff > 0 ? '+' : ''}{fmt(inventoryDiff.totalDiff, 2)}</strong>
                 </div>
               </div>
+              {inventorySession?.status === 'draft' ? (
+                <div className="stock-barcode-counter">
+                  <div>
+                    <strong>Comptage par code-barres</strong>
+                    <span>Scannez puis appuyez sur Entrée : chaque scan ajoute une unité.</span>
+                  </div>
+                  <div className="search-wrap">
+                    <Search size={15} className="search-icon" />
+                    <input
+                      autoFocus
+                      value={inventoryBarcode}
+                      onChange={event => setInventoryBarcode(event.target.value)}
+                      onKeyDown={handleInventoryBarcode}
+                      placeholder="Scanner un code-barres…"
+                    />
+                  </div>
+                  <button className="btn btn-secondary" onClick={openInventoryPhoneScanner}>
+                    <Smartphone size={16} /> Scanner avec téléphone
+                  </button>
+                </div>
+              ) : null}
+              <div className="stock-difference-cards">
+                <div><span>Lignes modifiées</span><strong>{inventoryDiff.changed}</strong></div>
+                <div className="positive"><span>Surplus</span><strong>+{fmt(inventoryDiff.surplus, 2)}</strong></div>
+                <div className="negative"><span>Manquant</span><strong>-{fmt(inventoryDiff.shortage, 2)}</strong></div>
+              </div>
               {products.length > INVENTORY_LIMIT && (
                 <div className="settings-note">
                   Affichage limite aux {INVENTORY_LIMIT} premiers produits pour garder l'interface rapide.
@@ -521,6 +675,65 @@ export default function StockPage() {
               {inventorySession?.status === 'validated' && (
                 <button className="btn btn-primary" onClick={() => setInventoryOpen(false)}>Terminer</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reorderOpen && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setReorderOpen(false)}>
+          <div className="modal modal-lg stock-reorder-modal">
+            <div className="modal-header">
+              <div>
+                <h2>Propositions de réapprovisionnement</h2>
+                <p className="text-muted text-sm">Vitesse de vente sur 30 jours · délai 14 jours · sécurité 7 jours</p>
+              </div>
+              <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setReorderOpen(false)}><X size={17} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="table-wrap stock-reorder-table">
+                <table>
+                  <thead><tr><th>Produit</th><th>Stock</th><th>Ventes 30 j</th><th>Vitesse / j</th><th>Couverture</th><th>À commander</th></tr></thead>
+                  <tbody>
+                    {reorderLoading ? (
+                      <TableLoadingRow colSpan={6} label="Calcul des besoins..." />
+                    ) : !reorderData?.items?.length ? (
+                      <tr><td colSpan={6}><div className="empty-state"><PackageCheck size={38} /><p>Aucun réapprovisionnement nécessaire</p></div></td></tr>
+                    ) : reorderData.items.map(item => (
+                      <tr key={item.product_id} className={item.is_out_of_stock ? 'stock-row-critical' : ''}>
+                        <td><strong>{item.product_name}</strong><div className="text-muted text-sm">{item.product_code}</div></td>
+                        <td>{fmt(item.current_stock, 2)} {item.unit}</td>
+                        <td>{fmt(item.sales_quantity, 2)}</td>
+                        <td>{fmt(item.daily_velocity, 2)}</td>
+                        <td>{item.days_cover == null ? 'Pas de vente' : `${fmt(item.days_cover, 1)} j`}</td>
+                        <td><span className="stock-order-quantity">+{fmt(item.suggested_quantity, 0)} {item.unit}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={() => setReorderOpen(false)}>Terminer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inventoryScannerOpen && inventoryScanner && (
+        <div className="modal-overlay stock-scanner-layer" onClick={e => e.target === e.currentTarget && setInventoryScannerOpen(false)}>
+          <div className="modal stock-scanner-modal">
+            <div className="modal-header">
+              <div><h2>Scanner d'inventaire</h2><p className="text-muted text-sm">Connexion unique pour toute la session</p></div>
+              <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setInventoryScannerOpen(false)}><X size={17} /></button>
+            </div>
+            <div className="modal-body">
+              <img src={inventoryScanner.qrDataUrl} alt="QR scanner inventaire" className="stock-scanner-qr" />
+              <div className={`stock-phone-status ${inventoryScanner.connected ? 'is-connected' : ''}`}>
+                <Wifi size={17} />
+                {inventoryScanner.connected ? 'Téléphone connecté — scannez les produits' : 'Scannez ce QR une seule fois avec le téléphone'}
+              </div>
+              <p className="text-muted text-sm">Gardez la page ouverte sur le téléphone. Chaque code détecté met à jour immédiatement le comptage.</p>
             </div>
           </div>
         </div>

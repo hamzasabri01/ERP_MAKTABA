@@ -25,6 +25,8 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const CashPage = lazy(() => import('./pages/CashPage'))
 const SecurityCenterPage = lazy(() => import('./pages/SecurityCenterPage'))
+const MobileScannerPage = lazy(() => import('./pages/MobileScannerPage'))
+const PrinterPage = lazy(() => import('./pages/PrinterPage'))
 
 function RequireAuth({ children }) {
   const { user, loading, sessionExpired } = useAuth()
@@ -82,6 +84,7 @@ export default function App() {
               <Suspense fallback={<PageLoader title="Chargement" detail="Preparation de la page..." />}>
                 <Routes>
                   <Route path="/login" element={<LoginPage />} />
+                  <Route path="/mobile-scanner" element={<MobileScannerPage />} />
                   <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>
                     <Route index element={<DefaultRoute />} />
                     <Route path="dashboard"  element={protectedPage('dashboard', <Dashboard />)} />
@@ -91,6 +94,7 @@ export default function App() {
                     <Route path="pos"        element={protectedPage('pos', <POSPage />)} />
                     <Route path="purchases"  element={protectedPage('purchases', <PurchasesPage />)} />
                     <Route path="expenses"   element={protectedPage('expenses', <ExpensesPage />)} />
+                    <Route path="printer"    element={protectedPage('printer', <PrinterPage />)} />
                     <Route path="stock"      element={protectedPage('stock', <StockPage />)} />
                     <Route path="reports"    element={protectedPage('reports', <ReportsPage />)} />
                     <Route path="suppliers"  element={protectedPage('suppliers', <SuppliersPage />)} />

@@ -13,6 +13,8 @@ const PERMISSIONS = [
   { key: 'dashboard', label: 'Tableau de bord', group: 'Principal' },
   { key: 'pos', label: 'POS', group: 'Principal' },
   { key: 'sales', label: 'Ventes', group: 'Commerce' },
+  { key: 'sales.service_price_edit', label: 'Modifier le prix des services', group: 'Ventes sensibles' },
+  { key: 'sales.product_price_edit', label: 'Modifier le prix des produits', group: 'Ventes sensibles' },
   { key: 'purchases', label: 'Achats', group: 'Commerce' },
   { key: 'clients', label: 'Clients', group: 'Contacts' },
   { key: 'suppliers', label: 'Fournisseurs', group: 'Contacts' },

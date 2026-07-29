@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  AlertCircle, ArrowRight, Clock, Package, RefreshCw, ShoppingCart,
+  AlertCircle, ArrowRight, CalendarDays, Clock, RefreshCw, ShoppingCart,
   TrendingDown, TrendingUp, Users, Wallet
 } from 'lucide-react'
 import {
@@ -26,6 +26,7 @@ export default function Dashboard() {
   const [topProd, setTop] = useState([])
   const [recent, setRecent] = useState([])
   const [alerts, setAlerts] = useState([])
+  const [comparisons, setComparisons] = useState({})
   const [period, setPeriod] = useState('month')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -33,16 +34,18 @@ export default function Dashboard() {
   const loadOverview = async (silent = false) => {
     silent ? setRefreshing(true) : setLoading(true)
     try {
-      const [kpiRes, topRes, recentRes, alertsRes] = await Promise.all([
+      const [kpiRes, topRes, recentRes, alertsRes, reportRes] = await Promise.all([
         api.get('/dashboard/kpis'),
         api.get('/dashboard/top-products'),
         api.get('/dashboard/recent-sales'),
         api.get('/dashboard/stock-alerts'),
+        api.get('/reports/overview?period=monthly'),
       ])
       setKpis(kpiRes.data)
       setTop(topRes.data)
       setRecent(recentRes.data)
       setAlerts(alertsRes.data)
+      setComparisons(reportRes.data?.comparisons || {})
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -66,19 +69,27 @@ export default function Dashboard() {
   }, [K])
 
   const quickStats = [
-    { label: t('dashboard.netMargin'), value: `${formatNumber(health.profitRate, 1)}%`, tone: health.profitRate >= 0 ? 'good' : 'bad' },
-    { label: t('dashboard.collectionRate'), value: `${formatNumber(health.collectionRate, 1)}%`, tone: health.collectionRate >= 80 ? 'good' : 'warn' },
-    { label: 'Caisse', value: K.cash_is_open ? formatMoney(K.cash_balance) : 'Fermée', tone: K.cash_is_open ? 'good' : 'warn' },
-    { label: t('dashboard.stockAlerts'), value: K.low_stock_count || 0, tone: (K.low_stock_count || 0) > 0 ? 'warn' : 'good' },
+    { label: t('dashboard.netMargin'), value: `${formatNumber(health.profitRate, 1)}%`, tone: health.profitRate >= 0 ? 'good' : 'bad', icon: health.profitRate >= 0 ? TrendingUp : TrendingDown },
+    { label: t('dashboard.collectionRate'), value: `${formatNumber(health.collectionRate, 1)}%`, tone: health.collectionRate >= 80 ? 'good' : 'warn', icon: Wallet },
+    { label: 'Caisse', value: K.cash_is_open ? formatMoney(K.cash_balance) : 'Fermée', tone: K.cash_is_open ? 'good' : 'warn', icon: Wallet },
+    { label: t('dashboard.stockAlerts'), value: K.low_stock_count || 0, tone: (K.low_stock_count || 0) > 0 ? 'warn' : 'good', icon: AlertCircle },
   ]
 
   return (
     <div className="page-content dashboard-page">
       <section className="dashboard-hero">
-        <div>
+        <div className="dashboard-hero-copy">
           <span className="dashboard-eyebrow">{t('dashboard.eyebrow')}</span>
           <h1>{t('dashboard.title')}</h1>
-          <p>{new Date().toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <p><CalendarDays size={17} /> {new Date().toLocaleDateString(locale, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+        </div>
+        <div className="dashboard-school-art" aria-hidden="true">
+          <span className="school-pencil" />
+          <span className="school-ruler" />
+          <span className="school-paperclip">⌇</span>
+          <span className="school-spark school-spark-one">✦</span>
+          <span className="school-spark school-spark-two">✧</span>
+          <span className="school-notebook" />
         </div>
         <div className="dashboard-hero-actions">
           <Link className="btn btn-secondary" to="/reports">{t('nav.reports')} <ArrowRight size={16} /></Link>
@@ -91,14 +102,16 @@ export default function Dashboard() {
 
       <section className="dashboard-command">
         <div className="command-primary">
-          <span>{t('dashboard.thisMonthRevenue')}</span>
-          <strong>{formatMoney(K.month_revenue)}</strong>
-          <small>{t('dashboard.today')}: {formatMoney(K.today_revenue)}</small>
+          <div className="command-icon"><TrendingUp size={20} /></div>
+          <div><span>{t('dashboard.thisMonthRevenue')}</span>
+            <strong>{formatMoney(K.month_revenue)}</strong>
+            <small>{t('dashboard.today')}: {formatMoney(K.today_revenue)}</small>
+          </div>
         </div>
         {quickStats.map(item => (
           <div className={`command-stat ${item.tone}`} key={item.label}>
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
+            <div className="command-icon"><item.icon size={19} /></div>
+            <div><span>{item.label}</span><strong>{item.value}</strong></div>
           </div>
         ))}
       </section>
@@ -106,15 +119,14 @@ export default function Dashboard() {
       <section className="dashboard-kpis">
         {loading ? Array.from({ length: 9 }).map((_, i) => <KpiSkeleton key={i} />) : (
           <>
-            <KpiCard color="blue" icon={TrendingUp} label={t('dashboard.thisMonthRevenue')} value={formatMoney(K.month_revenue)} sub={`${t('dashboard.today')}: ${formatMoney(K.today_revenue)}`} />
-            <KpiCard color="green" icon={Wallet} label={t('dashboard.netProfit')} value={formatMoney(K.month_profit)} sub={`${formatNumber(health.profitRate, 1)}% ${t('dashboard.netMargin')}`} trend={health.profitRate >= 0 ? 'up' : 'down'} t={t} />
+            <KpiCard color="blue" icon={TrendingUp} label={t('dashboard.thisMonthRevenue')} value={formatMoney(K.month_revenue)} sub={`${formatNumber(comparisons.month_vs_previous?.revenue || 0, 1)}% vs mois précédent`} link="/reports" />
+            <KpiCard color="green" icon={Wallet} label={t('dashboard.netProfit')} value={formatMoney(K.month_profit)} sub={`${formatNumber(comparisons.month_vs_previous?.net_profit || 0, 1)}% vs mois précédent`} trend={health.profitRate >= 0 ? 'up' : 'down'} t={t} link="/reports" />
             <KpiCard color="orange" icon={Clock} label={t('dashboard.unpaidInvoices')} value={K.pending_invoices || 0} sub={`${formatMoney(K.pending_amount)} ${t('dashboard.pending')}`} link="/sales" />
-            <KpiCard color="red" icon={TrendingDown} label={t('dashboard.expenses')} value={formatMoney(K.month_expenses)} sub={t('dashboard.thisMonth')} />
+            <KpiCard color="red" icon={TrendingDown} label={t('dashboard.expenses')} value={formatMoney(K.month_expenses)} sub={t('dashboard.thisMonth')} link="/reports" />
             <KpiCard color="green" icon={Wallet} label="Caisse" value={K.cash_is_open ? formatMoney(K.cash_balance) : 'Fermée'} sub={K.cash_is_open ? `Entrées ${formatMoney(K.cash_total_in)} - Sorties ${formatMoney(K.cash_total_out)}` : 'Aucune session ouverte'} link="/cash" />
             <KpiCard color="purple" icon={Users} label={t('dashboard.activeClients')} value={K.total_clients || 0} sub={t('dashboard.total')} link="/clients" />
             <KpiCard color="orange" icon={AlertCircle} label={t('dashboard.lowStock')} value={K.low_stock_count || 0} sub={t('dashboard.productsToWatch')} link="/stock?low=1" />
             <KpiCard color="blue" icon={ShoppingCart} label={t('dashboard.monthInvoices')} value={K.month_invoice_count || 0} sub={t('dashboard.totalCount')} link="/sales" />
-            <KpiCard color="green" icon={Package} label={t('dashboard.monthPurchases')} value={formatMoney(K.month_purchases)} sub={t('dashboard.suppliers')} link="/purchases" />
           </>
         )}
       </section>
@@ -234,6 +246,12 @@ function KpiCard({ color, icon: Icon, label, value, sub, link, trend, t }) {
       <strong>{value}</strong>
       <p>{label}</p>
       {sub && <small>{sub}</small>}
+      <div className="dash-kpi-visual" aria-hidden="true">
+        <Icon size={62} strokeWidth={1.25} />
+        <svg viewBox="0 0 130 44" preserveAspectRatio="none">
+          <path d="M0 39 C16 34, 20 19, 34 27 S52 38, 64 22 S82 31, 94 14 S111 28, 130 5" />
+        </svg>
+      </div>
     </div>
   )
   return link ? <Link className="dash-kpi-link" to={link}>{inner}</Link> : inner

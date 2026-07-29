@@ -53,6 +53,15 @@ class MoneyPolicy:
     price_tax_mode: str = "exclusive"
     rounding_scope: str = "line"
     allowed_tax_rates: tuple[Decimal, ...] = DEFAULT_TAX_RATES
+    tax_enabled: bool = True
+
+
+def _setting_enabled(value: Any, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", ""}
 
 
 def policy_from_settings(settings: dict | None) -> MoneyPolicy:
@@ -73,7 +82,8 @@ def policy_from_settings(settings: dict | None) -> MoneyPolicy:
         raise HTTPException(500, "Liste des taux de taxe invalide dans les parametres")
     if not rates or any(rate < ZERO or rate > HUNDRED for rate in rates):
         raise HTTPException(500, "Liste des taux de taxe invalide dans les parametres")
-    return MoneyPolicy(currency, tax_mode, rounding_scope, rates)
+    tax_enabled = _setting_enabled(settings.get("tva_enabled"), True)
+    return MoneyPolicy(currency, tax_mode, rounding_scope, rates, tax_enabled)
 
 
 def _validate_line(item: dict, policy: MoneyPolicy) -> dict:
@@ -81,7 +91,7 @@ def _validate_line(item: dict, policy: MoneyPolicy) -> dict:
     unit_price = quantize_price(item.get("unit_price"))
     purchase_price = quantize_price(item.get("purchase_price", 0))
     discount = quantize_percent(item.get("discount", 0))
-    tax_rate = quantize_percent(item.get("tax_rate", 0))
+    tax_rate = quantize_percent(item.get("tax_rate", 0)) if policy.tax_enabled else ZERO
     if quantity <= ZERO:
         raise HTTPException(400, "La quantite doit etre strictement positive")
     if unit_price < ZERO:
@@ -189,7 +199,7 @@ def calculate_document(
         "taxable_amount": values["taxable_amount"],
         "tax_amount": values["tax_amount"],
         "total_amount": values["total_amount"],
-    } for rate, values in sorted(breakdown.items())]
+    } for rate, values in sorted(breakdown.items())] if policy.tax_enabled else []
     total_amount = net_target + tax_target
     return {
         "items": lines,

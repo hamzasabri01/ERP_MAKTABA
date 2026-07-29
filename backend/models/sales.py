@@ -1,5 +1,5 @@
 """models/sales.py"""
-from sqlalchemy import Column, Integer, String, Numeric, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Boolean, Column, Integer, String, Numeric, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from core.database import Base
@@ -59,6 +59,9 @@ class SaleItem(Base):
     description    = Column(Text, default="")
     quantity       = Column(Numeric(18, 4), default=1)
     unit_price     = Column(Numeric(18, 4), default=0)
+    catalog_unit_price = Column(Numeric(18, 4), default=0)
+    price_overridden = Column(Boolean, nullable=False, default=False)
+    price_override_reason = Column(Text, default="")
     purchase_price = Column(Numeric(18, 4), default=0)
     discount       = Column(Numeric(7, 4), default=0)
     tax_rate       = Column(Numeric(7, 4), default=20)

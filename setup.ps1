@@ -49,20 +49,7 @@ Write-Host "  Installation des dependances Python..." -ForegroundColor Yellow
 Write-OK "Dependances Python installees"
 
 Write-Host "  Initialisation base de donnees..." -ForegroundColor Yellow
-& "venv\Scripts\python.exe" -c "
-from core.database import init_db
-init_db()
-from core.database import SessionLocal
-from models import Client
-db = SessionLocal()
-count = db.query(Client).count()
-db.close()
-if count == 0:
-    import seed_demo
-    seed_demo.run()
-else:
-    print('  Donnees existantes conservees')
-"
+& "venv\Scripts\python.exe" -c "from core.database import init_db; init_db(); print('  Base initialisee sans donnees de demonstration')"
 Write-OK "Base de donnees prete"
 
 # ── Frontend Setup ────────────────────────────────────────────────────────────
@@ -80,7 +67,8 @@ try {
     $shortcut = "$desktop\ProERP Web.lnk"
     $wsh = New-Object -ComObject WScript.Shell
     $sc = $wsh.CreateShortcut($shortcut)
-    $sc.TargetPath = "$ScriptDir\start.bat"
+    $sc.TargetPath = "powershell.exe"
+    $sc.Arguments = "-ExecutionPolicy Bypass -File `"$ScriptDir\start.ps1`""
     $sc.WorkingDirectory = $ScriptDir
     $sc.Description = "Lancer ProERP Web"
     $sc.Save()
@@ -92,7 +80,7 @@ try {
 Write-Host "`n=========================================" -ForegroundColor Green
 Write-Host "      Installation terminee !" -ForegroundColor Green
 Write-Host "=========================================`n" -ForegroundColor Green
-Write-Host "  Pour demarrer: double-cliquez sur  start.bat" -ForegroundColor White
-Write-Host "  Ou lancez:     .\start.bat`n" -ForegroundColor White
+Write-Host "  Pour demarrer: utilisez le raccourci 'ProERP Web'" -ForegroundColor White
+Write-Host "  Ou lancez:     powershell -ExecutionPolicy Bypass -File .\start.ps1`n" -ForegroundColor White
 
 Read-Host "Appuyez sur Entree pour terminer"

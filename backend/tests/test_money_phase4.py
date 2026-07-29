@@ -6,6 +6,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -66,6 +67,17 @@ class ExactMoneyTests(unittest.TestCase):
         self.assertEqual([row["rate"] for row in result["tax_breakdown"]], [Decimal("7.0000"), Decimal("20.0000")])
         self.assertEqual(sum(row["tax_amount"] for row in result["tax_breakdown"]), result["tax_amount"])
         self.assertEqual(sum(row["total_amount"] for row in result["tax_breakdown"]), result["total_amount"])
+
+    def test_global_tax_switch_forces_zero_and_removes_breakdown(self):
+        result = calculate_document(
+            [{"quantity": 2, "unit_price": 50, "tax_rate": 20}],
+            policy=MoneyPolicy(tax_enabled=False),
+        )
+        self.assertEqual(result["items"][0]["tax_rate"], Decimal("0"))
+        self.assertEqual(result["items"][0]["tax_amount"], Decimal("0.00"))
+        self.assertEqual(result["tax_amount"], Decimal("0.00"))
+        self.assertEqual(result["total_amount"], Decimal("100.00"))
+        self.assertEqual(result["tax_breakdown"], [])
 
     def test_invalid_boundaries_are_rejected(self):
         invalid_lines = [
@@ -177,7 +189,8 @@ class DocumentRouteCalculationTests(unittest.TestCase):
             discount="5",
             items=[{"quantity": "2", "unit_price": "19.995", "discount": "10", "tax_rate": "20"}],
         )
-        result = purchase_routes.create_purchase(body, self.db, self.user)
+        with patch.object(purchase_routes, "load_settings", return_value={"tva_enabled": True}):
+            result = purchase_routes.create_purchase(body, self.db, self.user)
         stored = self.db.get(Purchase, result.id)
         self.assertEqual(stored.discount_amount, Decimal("5.80"))
         self.assertEqual(stored.subtotal, Decimal("34.19"))

@@ -91,6 +91,29 @@ if (-not $ok) {
 Write-OK "Backend running (PID $($backendProc.Id))"
 
 # ===============================
+# Start trusted HTTPS scanner tunnel
+# ===============================
+$cloudflaredProc = $null
+$CloudflaredPath = Join-Path $ScriptDir "tools\cloudflared.exe"
+if (Test-Path $CloudflaredPath) {
+    Write-Info "Starting HTTPS tunnel for live mobile scanner..."
+    $RuntimeDir = Join-Path $ScriptDir ".runtime"
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+    $TunnelOut = Join-Path $RuntimeDir "scanner-tunnel.out.log"
+    $TunnelErr = Join-Path $RuntimeDir "scanner-tunnel.err.log"
+    Remove-Item -LiteralPath $TunnelOut,$TunnelErr -Force -ErrorAction SilentlyContinue
+    $cloudflaredProc = Start-Process -FilePath $CloudflaredPath `
+        -ArgumentList "tunnel", "--protocol", "http2", "--url", "http://127.0.0.1:8000", "--no-autoupdate" `
+        -RedirectStandardOutput $TunnelOut `
+        -RedirectStandardError $TunnelErr `
+        -WindowStyle Hidden `
+        -PassThru
+    Write-OK "Mobile scanner HTTPS tunnel starting (PID $($cloudflaredProc.Id))"
+} else {
+    Write-Warn "cloudflared missing: mobile scanner will use photo mode on HTTP."
+}
+
+# ===============================
 # Start Frontend
 # ===============================
 Write-Info "Starting frontend..."
@@ -137,6 +160,9 @@ finally {
 
     try { Stop-Process -Id $backendProc.Id -Force } catch {}
     try { Stop-Process -Id $frontendProc.Id -Force } catch {}
+    if ($cloudflaredProc) {
+        try { Stop-Process -Id $cloudflaredProc.Id -Force } catch {}
+    }
 
     foreach ($port in @(8000, 5173)) {
 

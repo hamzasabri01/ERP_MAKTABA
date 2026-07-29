@@ -1,7 +1,7 @@
 """api/routes/products.py"""
 import csv
 import io
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
@@ -13,8 +13,8 @@ from uuid import uuid4
 from core.database import get_db
 from core.security import get_current_user
 from core.settings_store import load_settings
-from models.product import Product, Category, Supplier
-from api.schemas import ProductCreate, ProductUpdate, ProductOut
+from models.product import Product, ProductBundleComponent, Category, Supplier
+from api.schemas import BundleComponentOut, BundleComponentsUpdate, ProductBulkArchive, ProductCreate, ProductUpdate, ProductOut
 from api.audit import log_action, model_snapshot
 from services.money import decimal_value, policy_from_settings, quantize_money, quantize_percent, quantize_price, quantize_quantity
 from services.stock import apply_stock_movement
@@ -70,7 +70,7 @@ def _validate_image_filename(filename: str | None, content_type: str) -> None:
 
 
 def _code_prefix(product_type):
-    return "SRV" if product_type == "service" else "PRD"
+    return "SRV" if product_type == "service" else ("BND" if product_type == "bundle" else "PRD")
 
 
 def _gen_code(db, product_type="product", used_codes=None):
@@ -104,11 +104,21 @@ def _to_out(p: Product) -> ProductOut:
     out.margin_pct    = round(p.margin_pct, 2)
     out.stock_value   = quantize_money(p.stock_value)
     out.is_low_stock  = p.is_low_stock
+    if p.product_type == "bundle":
+        capacities = [
+            (Decimal(str(row.component.stock_quantity or 0)) / Decimal(str(row.quantity))).to_integral_value(rounding=ROUND_FLOOR)
+            for row in p.bundle_components
+            if row.component and Decimal(str(row.quantity or 0)) > 0
+        ]
+        out.stock_quantity = float(min(capacities)) if capacities else 0
+        out.stock_value = 0
+        out.is_low_stock = False
     return out
 
 
 EXPORT_COLUMNS = [
-    "code", "name", "product_type", "category", "supplier", "barcode", "unit",
+    "code", "name", "product_type", "pricing_mode", "category", "supplier", "barcode", "unit",
+    "purchase_unit", "purchase_to_base_factor", "allow_fractional_sale",
     "purchase_price", "sale_price", "stock_quantity", "min_stock", "tax_rate",
     "tva_enabled", "description", "is_active",
 ]
@@ -124,6 +134,8 @@ HEADER_ALIASES = {
     "product": "name",
     "product_type": "product_type",
     "type": "product_type",
+    "pricing_mode": "pricing_mode",
+    "mode_tarification": "pricing_mode",
     "category": "category",
     "categorie": "category",
     "catégorie": "category",
@@ -135,6 +147,11 @@ HEADER_ALIASES = {
     "unit": "unit",
     "unite": "unit",
     "unité": "unit",
+    "purchase_unit": "purchase_unit",
+    "unite_achat": "purchase_unit",
+    "purchase_to_base_factor": "purchase_to_base_factor",
+    "facteur_conversion": "purchase_to_base_factor",
+    "allow_fractional_sale": "allow_fractional_sale",
     "purchase_price": "purchase_price",
     "prix_achat": "purchase_price",
     "p_achat": "purchase_price",
@@ -185,6 +202,53 @@ def _validate_tax_rate(value):
         allowed = ", ".join(format(item, "f") for item in policy.allowed_tax_rates)
         raise HTTPException(400, f"Taux de taxe invalide. Taux autorises: {allowed}")
     return rate
+
+
+def _ensure_unique_barcode(db: Session, barcode, exclude_id: int | None = None) -> str:
+    normalized = str(barcode or "").strip()
+    if not normalized:
+        return ""
+    query = db.query(Product).filter(func.lower(Product.barcode) == normalized.lower())
+    if exclude_id is not None:
+        query = query.filter(Product.id != exclude_id)
+    duplicate = query.first()
+    if duplicate:
+        raise HTTPException(409, f"Ce code EAN appartient déjà au produit « {duplicate.name} »")
+    return normalized
+
+
+def _ean13_check_digit(first_twelve_digits: str) -> str:
+    if len(first_twelve_digits) != 12 or not first_twelve_digits.isdigit():
+        raise ValueError("EAN-13 requires exactly 12 digits before the check digit")
+    weighted_sum = sum(
+        int(digit) * (1 if index % 2 == 0 else 3)
+        for index, digit in enumerate(first_twelve_digits)
+    )
+    return str((10 - weighted_sum % 10) % 10)
+
+
+def _is_valid_ean13(value) -> bool:
+    code = str(value or "").strip()
+    return (
+        len(code) == 13
+        and code.isdigit()
+        and code[-1] == _ean13_check_digit(code[:12])
+    )
+
+
+def _generate_internal_ean13(db: Session, product_id: int, reserved: set[str] | None = None) -> str:
+    """Generate a deterministic, scanner-compatible internal EAN-13."""
+    reserved = reserved if reserved is not None else set()
+    sequence = int(product_id)
+    while sequence <= 999_999_999:
+        base = f"611{sequence:09d}"
+        barcode = f"{base}{_ean13_check_digit(base)}"
+        exists = db.query(Product.id).filter(Product.barcode == barcode).first()
+        if not exists and barcode not in reserved:
+            reserved.add(barcode)
+            return barcode
+        sequence += 1
+    raise HTTPException(409, "Impossible de générer un nouveau code EAN-13 unique")
 
 
 def _int_flag(value, default=1):
@@ -273,10 +337,14 @@ def export_products(db: Session = Depends(get_db), user=Depends(get_current_user
             "code": p.code or "",
             "name": p.name or "",
             "product_type": p.product_type or "product",
+            "pricing_mode": p.pricing_mode or "fixed",
             "category": p.category.name if p.category else "",
             "supplier": p.supplier.company_name if p.supplier else "",
             "barcode": p.barcode or "",
             "unit": p.unit or "pcs",
+            "purchase_unit": p.purchase_unit or p.unit or "pcs",
+            "purchase_to_base_factor": p.purchase_to_base_factor or 1,
+            "allow_fractional_sale": int(bool(p.allow_fractional_sale)),
             "purchase_price": p.purchase_price or 0,
             "sale_price": p.sale_price or 0,
             "stock_quantity": p.stock_quantity or 0,
@@ -319,6 +387,7 @@ def import_products(file: UploadFile = File(...), db: Session = Depends(get_db),
     next_numbers = {
         "product": (db.query(func.count(Product.id)).filter(Product.code.ilike("PRD%")).scalar() or 0) + 1,
         "service": (db.query(func.count(Product.id)).filter(Product.code.ilike("SRV%")).scalar() or 0) + 1,
+        "bundle": (db.query(func.count(Product.id)).filter(Product.code.ilike("BND%")).scalar() or 0) + 1,
     }
     next_supplier_number = (db.query(func.count(Supplier.id)).scalar() or 0) + 1
     import_batch = uuid4().hex
@@ -332,7 +401,10 @@ def import_products(file: UploadFile = File(...), db: Session = Depends(get_db),
 
         product_type = _key(row.get("product_type")) or "product"
         if product_type not in ("product", "service"):
-            product_type = "service" if product_type in ("service", "services") else "product"
+            product_type = "service" if product_type in ("service", "services") else ("bundle" if product_type in ("bundle", "pack") else "product")
+        pricing_mode = _key(row.get("pricing_mode")) or ("editable" if product_type == "service" else "fixed")
+        if pricing_mode not in ("fixed", "editable", "manual"):
+            pricing_mode = "editable" if product_type == "service" else "fixed"
 
         category_id = None
         category_name = _clean(row.get("category"))
@@ -387,9 +459,13 @@ def import_products(file: UploadFile = File(...), db: Session = Depends(get_db),
             "min_stock": _decimal(row.get("min_stock"), Decimal("5"), kind="min_stock"),
             "barcode": barcode,
             "unit": _clean(row.get("unit")) or "pcs",
+            "purchase_unit": _clean(row.get("purchase_unit")) or _clean(row.get("unit")) or "pcs",
+            "purchase_to_base_factor": _decimal(row.get("purchase_to_base_factor"), Decimal("1"), kind="stock_quantity") or Decimal("1"),
+            "allow_fractional_sale": bool(_int_flag(row.get("allow_fractional_sale"), 0)),
             "tax_rate": _validate_tax_rate(_decimal(row.get("tax_rate"), Decimal("20"), kind="tax_rate")),
             "tva_enabled": _int_flag(row.get("tva_enabled"), 1),
             "product_type": product_type,
+            "pricing_mode": pricing_mode,
             "is_active": _int_flag(row.get("is_active"), 1),
             "updated_at": now,
         }
@@ -446,8 +522,93 @@ def import_products(file: UploadFile = File(...), db: Session = Depends(get_db),
 
 @router.get("/next-code")
 def next_product_code(product_type: str = "product", db: Session = Depends(get_db), user=Depends(get_current_user)):
-    normalized = "service" if product_type == "service" else "product"
+    normalized = product_type if product_type in ("product", "service", "bundle") else "product"
     return {"code": _gen_code(db, normalized), "product_type": normalized}
+
+
+@router.get("/stats")
+def product_catalog_stats(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    counts = dict(
+        db.query(Product.product_type, func.count(Product.id))
+        .filter(Product.is_active == 1)
+        .group_by(Product.product_type)
+        .all()
+    )
+    product_count = int(counts.get("product", 0))
+    service_count = int(counts.get("service", 0))
+    bundle_count = int(counts.get("bundle", 0))
+    return {
+        "total": product_count + service_count + bundle_count,
+        "product": product_count,
+        "service": service_count,
+        "bundle": bundle_count,
+        "low": int(
+            db.query(func.count(Product.id))
+            .filter(
+                Product.is_active == 1,
+                Product.product_type == "product",
+                Product.stock_quantity <= Product.min_stock,
+            )
+            .scalar() or 0
+        ),
+    }
+
+
+@router.get("/{pid}/components", response_model=List[BundleComponentOut])
+def get_bundle_components(pid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    bundle = db.query(Product).filter(Product.id == pid, Product.product_type == "bundle").first()
+    if not bundle:
+        raise HTTPException(404, "Pack scolaire non trouvé")
+    return [
+        BundleComponentOut(
+            id=row.id,
+            product_id=row.component_product_id,
+            product_name=row.component.name,
+            unit=row.component.unit or "",
+            quantity=row.quantity,
+        )
+        for row in bundle.bundle_components
+    ]
+
+
+@router.put("/{pid}/components", response_model=List[BundleComponentOut])
+def update_bundle_components(
+    pid: int,
+    body: BundleComponentsUpdate,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    bundle = db.query(Product).filter(Product.id == pid, Product.product_type == "bundle").first()
+    if not bundle:
+        raise HTTPException(404, "Pack scolaire non trouvé")
+    if not body.components:
+        raise HTTPException(400, "Le pack doit contenir au moins un produit")
+    ids = [row.product_id for row in body.components]
+    if len(ids) != len(set(ids)) or pid in ids:
+        raise HTTPException(400, "Composants du pack invalides ou dupliqués")
+    products = {
+        product.id: product for product in db.query(Product).filter(
+            Product.id.in_(ids), Product.is_active == 1, Product.product_type == "product"
+        ).all()
+    }
+    if len(products) != len(ids):
+        raise HTTPException(400, "Un composant est introuvable ou ne gère pas le stock")
+    before = [{"product_id": row.component_product_id, "quantity": str(row.quantity)} for row in bundle.bundle_components]
+    bundle.bundle_components.clear()
+    db.flush()
+    for row in body.components:
+        bundle.bundle_components.append(ProductBundleComponent(
+            component_product_id=row.product_id,
+            quantity=quantize_quantity(row.quantity),
+        ))
+    log_action(
+        db, user, "update", "product_bundle", bundle.id,
+        f"Composition du pack modifiée: {bundle.name}",
+        before={"components": before},
+        after={"components": [row.model_dump(mode="json") for row in body.components]},
+    )
+    db.commit()
+    return get_bundle_components(pid, db, user)
 
 
 @router.get("/{pid}", response_model=ProductOut)
@@ -525,7 +686,10 @@ def delete_product_image(pid: int, db: Session = Depends(get_db), user=Depends(g
 @router.post("", response_model=ProductOut, status_code=201)
 def create_product(body: ProductCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     data = body.model_dump()
+    data["barcode"] = _ensure_unique_barcode(db, data.get("barcode"))
     data["tax_rate"] = _validate_tax_rate(data.get("tax_rate", 0))
+    if data.get("product_type") == "service":
+        data["stock_quantity"] = 0
     initial_stock = quantize_quantity(data.pop("stock_quantity", 0) or 0)
     data["code"] = _gen_code(db, data.get("product_type") or "product")
     data["stock_quantity"] = 0
@@ -571,6 +735,11 @@ def update_product(pid: int, body: ProductUpdate, db: Session = Depends(get_db),
         raise HTTPException(404, "Produit non trouvé")
     before = model_snapshot(p, ["code", "name", "purchase_price", "sale_price", "stock_quantity", "min_stock", "is_active", "product_type"])
     payload = body.model_dump(exclude_none=True, exclude={"code"})
+    if "barcode" in payload:
+        payload["barcode"] = _ensure_unique_barcode(db, payload.get("barcode"), exclude_id=pid)
+    requested_type = payload.get("product_type", p.product_type)
+    if p.product_type == "product" and requested_type != "product" and quantize_quantity(p.stock_quantity or 0) != 0:
+        raise HTTPException(409, "Mettez le stock à zéro avant de convertir ce produit")
     if "tax_rate" in payload:
         payload["tax_rate"] = _validate_tax_rate(payload["tax_rate"])
     stock_quantity = payload.pop("stock_quantity", None)
@@ -613,3 +782,168 @@ def delete_product(pid: int, db: Session = Depends(get_db), user=Depends(get_cur
     log_action(db, user, "archive", "product", p.id, f"Produit archive: {p.name}", before=before, after=model_snapshot(p, ["code", "name", "is_active", "stock_quantity"]))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/bulk/archive")
+def archive_products_bulk(body: ProductBulkArchive, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    product_ids = list(dict.fromkeys(body.product_ids))
+    products = db.query(Product).filter(Product.id.in_(product_ids), Product.is_active == 1).all()
+    active_ids = {product.id for product in products}
+
+    dependent_rows = (
+        db.query(ProductBundleComponent, Product)
+        .join(Product, Product.id == ProductBundleComponent.bundle_product_id)
+        .filter(
+            ProductBundleComponent.component_product_id.in_(active_ids),
+            Product.is_active == 1,
+            ~Product.id.in_(active_ids),
+        )
+        .all()
+    ) if active_ids else []
+    if dependent_rows:
+        bundle_names = sorted({bundle.name for _, bundle in dependent_rows})
+        preview = ", ".join(bundle_names[:5])
+        suffix = "…" if len(bundle_names) > 5 else ""
+        raise HTTPException(
+            409,
+            f"Ces produits sont utilisés dans des packs actifs: {preview}{suffix}. "
+            "Sélectionnez également ces packs ou modifiez leur composition.",
+        )
+
+    now = datetime.utcnow()
+    archived_ids = []
+    for product in products:
+        before = model_snapshot(product, ["code", "name", "is_active", "stock_quantity"])
+        product.is_active = 0
+        product.updated_at = now
+        archived_ids.append(product.id)
+        log_action(
+            db, user, "archive", "product", product.id,
+            f"Produit archive en lot: {product.name}",
+            before=before,
+            after=model_snapshot(product, ["code", "name", "is_active", "stock_quantity"]),
+        )
+    db.commit()
+    return {
+        "ok": True,
+        "requested_count": len(product_ids),
+        "archived_count": len(archived_ids),
+        "already_archived_or_missing_count": len(product_ids) - len(archived_ids),
+        "archived_ids": archived_ids,
+    }
+
+
+@router.post("/bulk/generate-ean")
+def generate_missing_ean_codes(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    products = (
+        db.query(Product)
+        .filter(
+            Product.is_active == 1,
+            Product.product_type.in_(("product", "bundle")),
+            or_(Product.barcode == None, func.trim(Product.barcode) == ""),  # noqa: E711
+        )
+        .order_by(Product.id)
+        .all()
+    )
+    reserved: set[str] = set()
+    generated = []
+    now = datetime.utcnow()
+    for product in products:
+        before = {"barcode": product.barcode or ""}
+        product.barcode = _generate_internal_ean13(db, product.id, reserved)
+        product.updated_at = now
+        generated.append({"id": product.id, "name": product.name, "barcode": product.barcode})
+        log_action(
+            db, user, "generate_ean", "product", product.id,
+            f"Code EAN-13 généré pour {product.name}",
+            before=before,
+            after={"barcode": product.barcode},
+        )
+    db.commit()
+    return {
+        "ok": True,
+        "generated_count": len(generated),
+        "unchanged_count": (
+            db.query(func.count(Product.id))
+            .filter(
+                Product.is_active == 1,
+                Product.product_type.in_(("product", "bundle")),
+                Product.barcode != None,  # noqa: E711
+                func.trim(Product.barcode) != "",
+            )
+            .scalar()
+            or 0
+        ) - len(generated),
+        "products": generated,
+    }
+
+
+@router.post("/bulk/repair-ean")
+def repair_product_ean_codes(
+    body: ProductBulkArchive,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    product_ids = list(dict.fromkeys(body.product_ids))
+    products = (
+        db.query(Product)
+        .filter(
+            Product.id.in_(product_ids),
+            Product.is_active == 1,
+            Product.product_type.in_(("product", "bundle")),
+        )
+        .order_by(Product.id)
+        .all()
+    )
+    reserved: set[str] = set()
+    repaired = []
+    unchanged = 0
+    now = datetime.utcnow()
+    for product in products:
+        old_barcode = str(product.barcode or "").strip()
+        if _is_valid_ean13(old_barcode):
+            unchanged += 1
+            continue
+
+        if old_barcode.isdigit() and len(old_barcode) in {12, 13}:
+            first_twelve = old_barcode[:12]
+            candidate = f"{first_twelve}{_ean13_check_digit(first_twelve)}"
+            duplicate = db.query(Product.id).filter(
+                Product.barcode == candidate,
+                Product.id != product.id,
+            ).first()
+            new_barcode = (
+                _generate_internal_ean13(db, product.id, reserved)
+                if duplicate or candidate in reserved
+                else candidate
+            )
+            reserved.add(new_barcode)
+        elif not old_barcode:
+            new_barcode = _generate_internal_ean13(db, product.id, reserved)
+        else:
+            # Do not overwrite another valid symbology (EAN-8, UPC, Code 128, etc.).
+            continue
+
+        product.barcode = new_barcode
+        product.updated_at = now
+        repaired.append({
+            "id": product.id,
+            "name": product.name,
+            "old_barcode": old_barcode,
+            "barcode": new_barcode,
+        })
+        log_action(
+            db, user, "repair_ean", "product", product.id,
+            f"Code EAN-13 corrigé pour {product.name}",
+            before={"barcode": old_barcode},
+            after={"barcode": new_barcode},
+        )
+    db.commit()
+    return {
+        "ok": True,
+        "requested_count": len(product_ids),
+        "repaired_count": len(repaired),
+        "unchanged_count": unchanged,
+        "skipped_count": len(product_ids) - len(repaired) - unchanged,
+        "products": repaired,
+    }

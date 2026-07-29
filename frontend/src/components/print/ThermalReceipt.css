@@ -1,5 +1,5 @@
 .thermal-receipt {
-  width: min(100%, 82mm);
+  width: min(100%, var(--thermal-paper-width, 80mm));
   margin: 0 auto;
   padding: 4mm 4mm 5mm;
   background: #fff;
@@ -9,6 +9,10 @@
   font-family: Arial, Helvetica, sans-serif;
   font-size: 11px;
   line-height: 1.25;
+}
+
+.thermal-print-active {
+  display: none;
 }
 
 .thermal-receipt[dir="rtl"] {
@@ -52,6 +56,42 @@
   border: 1px solid #c8c8c8;
   font-weight: 900;
   letter-spacing: .16em;
+}
+
+.thermal-barcode {
+  width: min(100%, 62mm);
+  margin: 7px auto 1px;
+  padding: 3px 5px 2px;
+  background: #fff;
+  color: #111;
+}
+
+.thermal-barcode svg {
+  display: block;
+  width: 100%;
+  height: 30px;
+  fill: #000;
+  shape-rendering: crispEdges;
+}
+
+.thermal-barcode span {
+  display: block;
+  margin-top: 2px;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .13em;
+  text-align: center;
+}
+
+.thermal-barcode.is-compact {
+  width: 48mm;
+  padding-inline: 2px;
+}
+
+.thermal-barcode.is-compact svg {
+  height: 26px;
 }
 
 .thermal-meta {
@@ -212,29 +252,33 @@
 }
 
 @media print {
-  body:has(.thermal-print-active) * {
-    visibility: hidden !important;
+  /* The print portal is a direct child of body. Hide only its siblings.
+     The previous descendant selector had higher specificity than the
+     visibility override and consequently hid the receipt itself. */
+  body:has(> .thermal-print-active) > *:not(.thermal-print-active) {
+    display: none !important;
   }
 
-  .thermal-print-active,
-  .thermal-print-active * {
+  body > .thermal-print-active,
+  body > .thermal-print-active * {
     visibility: visible !important;
   }
 
-  .thermal-print-active {
+  body > .thermal-print-active {
     display: block !important;
     position: fixed !important;
     inset: 0 auto auto 0 !important;
-    width: 80mm !important;
+    width: var(--thermal-paper-width, 80mm) !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #fff !important;
     z-index: 99999 !important;
+    overflow: visible !important;
   }
 
   .thermal-print-active .thermal-receipt {
-    width: 80mm !important;
-    max-width: 80mm !important;
+    width: var(--thermal-paper-width, 80mm) !important;
+    max-width: var(--thermal-paper-width, 80mm) !important;
     border: 0 !important;
     border-radius: 0 !important;
     margin: 0 !important;
@@ -242,7 +286,26 @@
     box-shadow: none !important;
   }
 
-  @page {
+  .thermal-ticket-copy {
+    width: var(--thermal-paper-width, 80mm);
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .thermal-ticket-copy:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .thermal-paper-58 { page: thermal58; }
+  .thermal-paper-80 { page: thermal80; }
+
+  @page thermal58 {
+    size: 58mm auto;
+    margin: 0;
+  }
+
+  @page thermal80 {
     size: 80mm auto;
     margin: 0;
   }

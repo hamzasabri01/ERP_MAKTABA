@@ -1,8 +1,9 @@
 // src/pages/ReportsPage.jsx
 import { useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, BarChart2, Boxes, CalendarDays, Download, PieChart as PieIcon,
-  RefreshCw, ShoppingCart, TrendingDown, TrendingUp, Wallet
+  AlertTriangle, BarChart2, Boxes, CalendarDays, Clock3, Download, FileSpreadsheet,
+  FileText, PackageX, PieChart as PieIcon, RefreshCw, ShoppingCart,
+  TrendingDown, TrendingUp, Wallet, X
 } from 'lucide-react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie,
@@ -26,12 +27,20 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [detailCard, setDetailCard] = useState(null)
 
   const loadOverview = async (silent = false) => {
     silent ? setRefreshing(true) : setLoading(true)
     setError('')
     try {
-      const res = await api.get(`/reports/overview?period=${period}`)
+      const params = { period }
+      if (period === 'custom') {
+        params.start_date = startDate
+        params.end_date = endDate
+      }
+      const res = await api.get('/reports/overview', { params })
       setOverview(res.data)
     } catch (err) {
       setError(err.response?.data?.detail || 'Impossible de charger les rapports. Verifiez la connexion API.')
@@ -41,7 +50,9 @@ export default function ReportsPage() {
     }
   }
 
-  useEffect(() => { loadOverview() }, [period])
+  useEffect(() => {
+    if (period !== 'custom') loadOverview()
+  }, [period])
 
   const summary = overview?.summary || {}
   const trend = overview?.trend || {}
@@ -49,6 +60,10 @@ export default function ReportsPage() {
   const stock = overview?.stock || { products: [] }
   const categories = overview?.categories || []
   const timeseries = overview?.timeseries || []
+  const topItems = overview?.top_items || []
+  const dormantProducts = overview?.dormant_products || []
+  const hourlyPerformance = overview?.hourly_performance || []
+  const comparisons = overview?.comparisons || {}
 
   const pnlData = useMemo(() => ([
     { name: 'CA', value: summary.revenue || 0, color: '#4f8ef7' },
@@ -68,11 +83,73 @@ export default function ReportsPage() {
   const lowProducts = (stock.products || []).filter(p => p.is_low).slice(0, 6)
 
   const cards = [
-    { label: "Chiffre d'affaires", value: fmt(summary.revenue), suffix: 'MAD', icon: TrendingUp, tone: 'blue', trend: trend.revenue },
-    { label: 'Benefice net', value: fmt(summary.net_profit), suffix: 'MAD', icon: Wallet, tone: (summary.net_profit || 0) >= 0 ? 'green' : 'red', trend: trend.net_profit },
-    { label: 'Reste a encaisser', value: fmt(summary.unpaid), suffix: 'MAD', icon: AlertTriangle, tone: (summary.unpaid || 0) > 0 ? 'orange' : 'green' },
-    { label: 'Valeur stock', value: fmt(stock.total_value), suffix: 'MAD', icon: Boxes, tone: 'purple', sub: `${stock.low_stock_count || 0} stock faible` },
+    { label: "Chiffre d'affaires", value: fmt(summary.revenue), suffix: 'MAD', icon: TrendingUp, tone: 'blue', trend: trend.revenue, detail: `Période précédente : ${fmt(overview?.previous?.revenue)} MAD` },
+    { label: 'Bénéfice réel', value: fmt(summary.net_profit), suffix: 'MAD', icon: Wallet, tone: (summary.net_profit || 0) >= 0 ? 'green' : 'red', trend: trend.net_profit, detail: `Marge brute ${fmt(summary.gross_profit)} MAD − dépenses ${fmt(summary.expenses)} MAD` },
+    { label: 'Reste à encaisser', value: fmt(summary.unpaid), suffix: 'MAD', icon: AlertTriangle, tone: (summary.unpaid || 0) > 0 ? 'orange' : 'green', detail: `Encaissé : ${fmt(summary.paid)} MAD sur ${fmt(summary.revenue)} MAD` },
+    { label: 'Valeur stock', value: fmt(stock.total_value), suffix: 'MAD', icon: Boxes, tone: 'purple', sub: `${stock.low_stock_count || 0} stock faible`, detail: `${stock.products?.length || 0} produits valorisés` },
   ]
+
+  const exportExcel = () => {
+    if (!overview) return
+    const rows = [
+      ['Indicateur', 'Valeur'],
+      ["Chiffre d'affaires", summary.revenue],
+      ['Coût des ventes', summary.cogs],
+      ['Dépenses', summary.expenses],
+      ['Bénéfice réel', summary.net_profit],
+      [],
+      ['Produit / service', 'Type', 'Quantité', 'CA', 'Bénéfice brut'],
+      ...topItems.map(item => [item.name, item.product_type, item.quantity, item.revenue, item.gross_profit]),
+    ]
+    const xmlEscape = value => String(value ?? '').replace(/[<>&'"]/g, char => ({
+      '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;',
+    })[char])
+    const worksheet = rows.map(row => `<Row>${row.map(value => {
+      const numeric = value !== '' && value != null && Number.isFinite(Number(value))
+      return `<Cell><Data ss:Type="${numeric ? 'Number' : 'String'}">${xmlEscape(value)}</Data></Cell>`
+    }).join('')}</Row>`).join('')
+    const workbook = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Worksheet ss:Name="Rapport"><Table>${worksheet}</Table></Worksheet></Workbook>`
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' }))
+    link.download = `rapport-${overview.period.start}-${overview.period.end}.xls`
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
+  const exportPdf = async () => {
+    if (!overview) return
+    const [{ jsPDF }, { autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
+    const doc = new jsPDF()
+    doc.setFontSize(18)
+    doc.setTextColor(25, 73, 150)
+    doc.text('LIBRARY SABRI - Rapport', 14, 18)
+    doc.setFontSize(10)
+    doc.setTextColor(80)
+    doc.text(`Periode : ${overview.period.start} au ${overview.period.end}`, 14, 26)
+    autoTable(doc, {
+      startY: 33,
+      head: [['Indicateur', 'Valeur MAD']],
+      body: [
+        ["Chiffre d'affaires", fmt(summary.revenue)],
+        ['Cout des ventes', fmt(summary.cogs)],
+        ['Depenses', fmt(summary.expenses)],
+        ['Benefice reel', fmt(summary.net_profit)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [35, 105, 220] },
+    })
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 10,
+      head: [['Produit / service', 'Type', 'Qte', 'CA', 'Benefice']],
+      body: topItems.map(item => [item.name, item.product_type, fmt(item.quantity, 2), fmt(item.revenue), fmt(item.gross_profit)]),
+      theme: 'striped',
+      headStyles: { fillColor: [20, 158, 120] },
+    })
+    doc.save(`rapport-${overview.period.start}-${overview.period.end}.pdf`)
+  }
 
   return (
     <div className="page-content reports-page">
@@ -87,7 +164,15 @@ export default function ReportsPage() {
             {PERIODS.map(([id, label]) => (
               <button key={id} className={period === id ? 'active' : ''} onClick={() => setPeriod(id)}>{label}</button>
             ))}
+            <button className={period === 'custom' ? 'active' : ''} onClick={() => setPeriod('custom')}>Personnalisé</button>
           </div>
+          {period === 'custom' && <div className="reports-date-filter">
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
+            <button className="btn btn-primary" disabled={!startDate || !endDate} onClick={() => loadOverview()}>Appliquer</button>
+          </div>}
+          <button className="btn btn-secondary" onClick={exportPdf} disabled={!overview}><FileText size={16} /> PDF</button>
+          <button className="btn btn-secondary" onClick={exportExcel} disabled={!overview}><FileSpreadsheet size={16} /> Excel</button>
           <button className="btn btn-secondary" onClick={() => loadOverview(true)} disabled={refreshing}>
             <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} />
             Actualiser
@@ -100,7 +185,7 @@ export default function ReportsPage() {
       {loading ? <ReportsSkeleton /> : (
         <>
           <section className="reports-kpis">
-            {cards.map(card => <ReportCard key={card.label} {...card} />)}
+            {cards.map(card => <ReportCard key={card.label} {...card} onClick={() => setDetailCard(card)} />)}
           </section>
 
           <section className="reports-tabs">
@@ -109,6 +194,8 @@ export default function ReportsPage() {
               ['categories', 'Categories'],
               ['stock', 'Stock'],
               ['cash', 'Caisse'],
+              ['performance', 'Performance horaire'],
+              ['products', 'Produits & services'],
             ].map(([id, label]) => (
               <button key={id} className={activeTab === id ? 'active' : ''} onClick={() => setActiveTab(id)}>{label}</button>
             ))}
@@ -254,16 +341,75 @@ export default function ReportsPage() {
               </Panel>
             </div>
           )}
+
+          {activeTab === 'performance' && (
+            <div className="reports-grid">
+              <Panel title="Performance par heure" subtitle="Repérez les heures de pointe">
+                <ResponsiveContainer width="100%" height={340}>
+                  <BarChart data={hourlyPerformance}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="hour" tick={{ fill: 'var(--text3)', fontSize: 11 }} />
+                    <YAxis tick={{ fill: 'var(--text3)', fontSize: 11 }} tickFormatter={compactMoney} />
+                    <Tooltip content={<ReportTooltip />} />
+                    <Bar dataKey="revenue" name="CA" fill="#4f8ef7" radius={[7, 7, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Panel>
+              <Panel title="Comparaisons rapides" subtitle="Aujourd'hui et mois en cours">
+                <div className="comparison-list">
+                  <Comparison label="Aujourd'hui / hier" value={comparisons.today_vs_yesterday?.revenue} amount={comparisons.today?.revenue} />
+                  <Comparison label="Ventes aujourd'hui / hier" value={comparisons.today_vs_yesterday?.sale_count} amount={comparisons.today?.sale_count} money={false} />
+                  <Comparison label="Mois / mois précédent" value={comparisons.month_vs_previous?.revenue} amount={comparisons.month?.revenue} />
+                  <Comparison label="Bénéfice / mois précédent" value={comparisons.month_vs_previous?.net_profit} amount={comparisons.month?.net_profit} />
+                </div>
+              </Panel>
+            </div>
+          )}
+
+          {activeTab === 'products' && (
+            <div className="reports-stock-grid">
+              <Panel title="Meilleures ventes" subtitle="Produits et services">
+                <div className="analytics-table">
+                  {topItems.map((item, index) => <div key={`${item.product_id}-${index}`}>
+                    <b>{index + 1}</b><span><strong>{item.name}</strong><small>{item.product_type === 'service' ? 'Service' : 'Produit'}</small></span>
+                    <em>{fmt(item.quantity, 2)} · {fmt(item.revenue)} MAD</em>
+                  </div>)}
+                  {!topItems.length && <Empty text="Aucune vente sur la période" icon={ShoppingCart} />}
+                </div>
+              </Panel>
+              <Panel title="Produits dormants" subtitle="Aucune vente depuis au moins 60 jours">
+                <div className="analytics-table dormant">
+                  {dormantProducts.map(item => <div key={item.product_id}>
+                    <PackageX size={17} /><span><strong>{item.name}</strong><small>{item.last_sale_at ? `${item.inactive_days} jours sans vente` : 'Jamais vendu'}</small></span>
+                    <em>{fmt(item.stock, 2)} · {fmt(item.stock_value)} MAD</em>
+                  </div>)}
+                  {!dormantProducts.length && <Empty text="Aucun produit dormant" icon={PackageX} />}
+                </div>
+              </Panel>
+            </div>
+          )}
         </>
       )}
+
+      {detailCard && <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDetailCard(null)}>
+        <div className="modal report-detail-modal">
+          <div className="modal-header"><h2>{detailCard.label}</h2><button className="btn btn-secondary btn-sm btn-icon" onClick={() => setDetailCard(null)}><X size={17} /></button></div>
+          <div className="modal-body">
+            <detailCard.icon size={34} />
+            <strong>{detailCard.value} {detailCard.suffix}</strong>
+            <p>{detailCard.detail}</p>
+            {typeof detailCard.trend === 'number' && <span className={detailCard.trend >= 0 ? 'text-success' : 'text-danger'}>{detailCard.trend >= 0 ? '+' : ''}{fmt(detailCard.trend, 1)}% par rapport à la période précédente</span>}
+          </div>
+        </div>
+      </div>}
     </div>
   )
 }
 
-function ReportCard({ label, value, suffix, icon: Icon, tone, trend, sub }) {
+function ReportCard({ label, value, suffix, icon: Icon, tone, trend, sub, onClick }) {
   const trendValue = typeof trend === 'number' ? trend : null
   return (
-    <article className={`report-card ${tone}`}>
+    <article className={`report-card ${tone}`} onClick={onClick} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && onClick?.()}>
       <div className="report-card-top">
         <span><Icon size={18} /></span>
         {trendValue !== null && <em className={trendValue >= 0 ? 'up' : 'down'}>{trendValue >= 0 ? '+' : ''}{fmt(trendValue, 1)}%</em>}
@@ -273,6 +419,14 @@ function ReportCard({ label, value, suffix, icon: Icon, tone, trend, sub }) {
       {sub && <small>{sub}</small>}
     </article>
   )
+}
+
+function Comparison({ label, value, amount, money = true }) {
+  const variation = Number(value || 0)
+  return <div className="comparison-row">
+    <span><small>{label}</small><strong>{money ? `${fmt(amount)} MAD` : fmt(amount, 0)}</strong></span>
+    <em className={variation >= 0 ? 'up' : 'down'}>{variation >= 0 ? '+' : ''}{fmt(variation, 1)}%</em>
+  </div>
 }
 
 function Panel({ title, subtitle, children }) {

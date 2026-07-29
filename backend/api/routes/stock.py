@@ -1,7 +1,8 @@
 """Stock API: atomic movements, reconciliation, and controlled inventories."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from math import ceil
 from typing import List, Optional
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from api.schemas import (
 from core.database import get_db
 from core.security import get_current_user
 from models.product import Product
+from models.sales import Sale, SaleItem
 from models.stock import InventoryCountLine, InventorySession, StockMovement
 from services.document_workflow import claim_idempotency, claim_version
 from services.money import quantize_money, quantize_quantity
@@ -120,6 +122,79 @@ def get_summary(db: Session = Depends(get_db), user=Depends(get_current_user)):
 @router.get("/reconciliation", response_model=StockReconciliationOut)
 def get_reconciliation(db: Session = Depends(get_db), user=Depends(get_current_user)):
     return reconcile_stock(db)
+
+
+@router.get("/reorder-suggestions")
+def get_reorder_suggestions(
+    sales_days: int = 30,
+    lead_time_days: int = 14,
+    safety_days: int = 7,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Suggest replenishment from net sales velocity and configured minimum stock."""
+    sales_days = min(max(sales_days, 7), 365)
+    lead_time_days = min(max(lead_time_days, 1), 180)
+    safety_days = min(max(safety_days, 0), 90)
+    since = datetime.now() - timedelta(days=sales_days)
+    products = db.query(Product).filter(
+        Product.is_active == 1,
+        Product.product_type == "product",
+    ).all()
+    quantities: dict[int, float] = {}
+    rows = (
+        db.query(SaleItem.product_id, SaleItem.quantity, Sale.doc_type)
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .filter(
+            SaleItem.product_id.isnot(None),
+            Sale.date_time >= since,
+            Sale.status.in_(("confirmed", "partially_paid", "paid")),
+        )
+        .all()
+    )
+    for product_id, quantity, doc_type in rows:
+        direction = -1 if doc_type == "credit_note" else 1
+        quantities[product_id] = quantities.get(product_id, 0.0) + direction * float(quantity or 0)
+
+    suggestions = []
+    coverage_days = lead_time_days + safety_days
+    for product in products:
+        sold = max(quantities.get(product.id, 0.0), 0.0)
+        velocity = sold / sales_days
+        current = float(product.stock_quantity or 0)
+        minimum = float(product.min_stock or 0)
+        velocity_target = ceil(velocity * coverage_days)
+        target_stock = max(velocity_target, ceil(minimum))
+        suggested = max(ceil(target_stock - current), 0)
+        low = current <= minimum
+        if not low and suggested <= 0:
+            continue
+        suggestions.append({
+            "product_id": product.id,
+            "product_code": product.code or "",
+            "product_name": product.name,
+            "unit": product.unit or "pcs",
+            "current_stock": current,
+            "min_stock": minimum,
+            "sales_quantity": round(sold, 4),
+            "daily_velocity": round(velocity, 4),
+            "days_cover": round(current / velocity, 1) if velocity > 0 else None,
+            "target_stock": target_stock,
+            "suggested_quantity": suggested,
+            "is_out_of_stock": current <= 0,
+        })
+    suggestions.sort(key=lambda row: (
+        not row["is_out_of_stock"],
+        row["days_cover"] if row["days_cover"] is not None else 999999,
+        -row["suggested_quantity"],
+    ))
+    return {
+        "sales_days": sales_days,
+        "lead_time_days": lead_time_days,
+        "safety_days": safety_days,
+        "generated_at": datetime.utcnow(),
+        "items": suggestions,
+    }
 
 
 @router.get("/inventory-sessions", response_model=List[InventorySessionOut])

@@ -93,6 +93,14 @@ const HELP = {
   delivery_prefix: { fr: 'Prefixe utilise pour les bons de livraison.', ar: 'البادئة المستخدمة لسندات التسليم.' },
   po_prefix: { fr: 'Prefixe utilise pour les commandes fournisseurs.', ar: 'البادئة المستخدمة لطلبات الشراء من الموردين.' },
   receipt_footer: { fr: 'Message imprime en bas des tickets POS.', ar: 'رسالة تطبع أسفل تذاكر POS.' },
+  receipt_paper_width: { fr: 'Largeur physique du rouleau de votre imprimante thermique.', ar: 'العرض الفعلي للفة الطابعة الحرارية.' },
+  receipt_copies: { fr: 'Nombre de tickets generes pour chaque impression.', ar: 'عدد نسخ التذكرة عند كل عملية طباعة.' },
+  receipt_auto_print: { fr: 'Ouvre automatiquement la boite de dialogue d’impression apres une vente POS validee.', ar: 'يفتح نافذة الطباعة تلقائياً بعد تأكيد بيع POS.' },
+  receipt_show_logo: { fr: 'Affiche le logo du magasin en haut du ticket.', ar: 'يعرض شعار المكتبة أعلى التذكرة.' },
+  receipt_show_address: { fr: 'Affiche l’adresse du magasin quand elle est renseignee.', ar: 'يعرض عنوان المكتبة عند إدخاله.' },
+  receipt_show_phone: { fr: 'Affiche le telephone du magasin sur le ticket.', ar: 'يعرض هاتف المكتبة في التذكرة.' },
+  receipt_show_ice: { fr: 'Affiche l’identifiant ICE sur le ticket.', ar: 'يعرض رقم ICE في التذكرة.' },
+  receipt_show_barcode: { fr: 'Ajoute un code-barres CODE128 lisible pour retrouver rapidement le ticket.', ar: 'يضيف باركود CODE128 للعثور على التذكرة بسرعة.' },
   invoice_notes: { fr: 'Notes par defaut a afficher sur les factures.', ar: 'ملاحظات افتراضية تظهر في الفواتير.' },
   quote_notes: { fr: 'Notes par defaut a afficher sur les devis.', ar: 'ملاحظات افتراضية تظهر في عروض السعر.' },
   sale_terms: { fr: 'Conditions commerciales visibles pour les ventes.', ar: 'الشروط التجارية الخاصة بالمبيعات.' },
@@ -610,7 +618,7 @@ export default function SettingsPage() {
               {activeTab === 'app' && (
                 <div className="settings-grid">
                   <SettingsCard icon={Settings} title={t('settings.appTitle')} hint={t('settings.appHint')}>
-                    <Field label={t('settings.appName')} help={help('app_name')}><input {...F('app_name')} placeholder="Maktaba Print" /></Field>
+                    <Field label={t('settings.appName')} help={help('app_name')}><input {...F('app_name')} placeholder="LIBRARY SABRI" /></Field>
                     <Field label={t('settings.defaultLanguage')} help={help('app_language')}><select {...F('app_language')}>{languageOptions}</select></Field>
                     <Field label={t('settings.startPage')} help={help('default_route')}><select {...F('default_route')}>{routeOptions}</select></Field>
                     <Field label={t('settings.timezone')} help={help('timezone')}><input {...F('timezone')} placeholder="Africa/Casablanca" /></Field>
@@ -628,7 +636,7 @@ export default function SettingsPage() {
                 <div className="settings-grid">
                   <SettingsCard icon={Bell} title="Identite visuelle" hint="Logo, couleurs de marque et rendu des documents.">
                     <Field label={t('settings.logoUrl')} help={help('logo_url')}>
-                      <input {...F('logo_url')} placeholder="/brand/proerp-logo.svg ou https://..." />
+                      <input {...F('logo_url')} placeholder="/brand/sabri-library.png ou https://..." />
                     </Field>
                     <div className="settings-two">
                       <Field label="Couleur principale" help={help('brand_primary_color')}>
@@ -652,7 +660,7 @@ export default function SettingsPage() {
                     <button className="btn btn-secondary" onClick={() => {
                       setForm(prev => ({
                         ...prev,
-                        logo_url: '/brand/proerp-logo.svg',
+                        logo_url: '/brand/sabri-library.png',
                         brand_primary_color: '#2563EB',
                         brand_secondary_color: '#0891B2',
                         brand_success_color: '#16A34A',
@@ -721,6 +729,27 @@ export default function SettingsPage() {
                     <Field label={t('settings.receiptFooter')} help={help('receipt_footer')}><textarea {...F('receipt_footer')} rows={2} /></Field>
                     <Field label={t('settings.invoiceNotes')} help={help('invoice_notes')}><textarea {...F('invoice_notes')} rows={3} /></Field>
                     <Field label={t('settings.quoteNotes')} help={help('quote_notes')}><textarea {...F('quote_notes')} rows={3} /></Field>
+                  </SettingsCard>
+                  <SettingsCard icon={ReceiptText} title="Ticket thermique" hint="Format, contenu et comportement de l'impression POS.">
+                    <div className="settings-two">
+                      <Field label="Largeur papier" help={help('receipt_paper_width')}>
+                        <select {...FN('receipt_paper_width')}>
+                          <option value={58}>58 mm</option>
+                          <option value={80}>80 mm</option>
+                        </select>
+                      </Field>
+                      <Field label="Nombre de copies" help={help('receipt_copies')}>
+                        <input type="number" min="1" max="5" {...FN('receipt_copies')} />
+                      </Field>
+                    </div>
+                    <Toggle label="Impression automatique après vente" help={help('receipt_auto_print')} {...FB('receipt_auto_print')} />
+                    <div className="settings-check-grid">
+                      <Toggle label="Afficher le logo" help={help('receipt_show_logo')} {...FB('receipt_show_logo')} />
+                      <Toggle label="Afficher l'adresse" help={help('receipt_show_address')} {...FB('receipt_show_address')} />
+                      <Toggle label="Afficher le téléphone" help={help('receipt_show_phone')} {...FB('receipt_show_phone')} />
+                      <Toggle label="Afficher ICE" help={help('receipt_show_ice')} {...FB('receipt_show_ice')} />
+                      <Toggle label="Afficher le code-barres" help={help('receipt_show_barcode')} {...FB('receipt_show_barcode')} />
+                    </div>
                   </SettingsCard>
                   <SettingsCard icon={CalendarDays} title={t('settings.termsTitle')} hint={t('settings.termsHint')}>
                     <Field label={t('settings.saleTerms')} help={help('sale_terms')}><textarea {...F('sale_terms')} rows={3} /></Field>
@@ -815,7 +844,7 @@ export default function SettingsPage() {
                     <Field label="CC" help={help('report_email_cc')}><input {...F('report_email_cc')} placeholder="optionnel" /></Field>
                     <Field label="BCC" help={help('report_email_bcc')}><input {...F('report_email_bcc')} placeholder="optionnel" /></Field>
                     <Field label="Reply-To" help={help('report_email_reply_to')}><input {...F('report_email_reply_to')} placeholder="support@exemple.com" /></Field>
-                    <Field label={t('settings.subjectPrefix')} help={help('report_email_subject_prefix')}><input {...F('report_email_subject_prefix')} placeholder="Rapport Maktaba Print" /></Field>
+                    <Field label={t('settings.subjectPrefix')} help={help('report_email_subject_prefix')}><input {...F('report_email_subject_prefix')} placeholder="Rapport LIBRARY SABRI" /></Field>
                     <div className="settings-check-grid">
                       <Toggle label={t('settings.profitLoss')} help={help('report_email_include_profit')} {...FB('report_email_include_profit')} />
                       <Toggle label={t('settings.salesByCategory')} help={help('report_email_include_sales_by_category')} {...FB('report_email_include_sales_by_category')} />
@@ -838,7 +867,7 @@ export default function SettingsPage() {
                       <span>La valeur est protegee cote serveur via la variable SMTP_PASSWORD et n'est jamais renvoyee au navigateur.</span>
                     </div>
                     <Field label={t('settings.fromEmail')} help={help('smtp_from_email')}><input {...F('smtp_from_email')} placeholder="noreply@exemple.com" /></Field>
-                    <Field label={t('settings.fromName')} help={help('smtp_from_name')}><input {...F('smtp_from_name')} placeholder="Maktaba Print" /></Field>
+                    <Field label={t('settings.fromName')} help={help('smtp_from_name')}><input {...F('smtp_from_name')} placeholder="LIBRARY SABRI" /></Field>
                     <Field label={t('settings.timeoutSeconds')} help={help('smtp_timeout_seconds')}><input type="number" min="5" {...FN('smtp_timeout_seconds')} /></Field>
                     <button className="btn btn-secondary" onClick={sendTestEmail} disabled={testingEmail || saving}>
                       {testingEmail ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Mail size={16} />}
@@ -1083,7 +1112,7 @@ function IdentityPreview({ settings }) {
           <img src={logoUrl} alt="" />
           <div>
             <strong>{getCompanyName(settings)}</strong>
-            <span>Interface Maktaba Print</span>
+            <span>Interface LIBRARY SABRI</span>
           </div>
         </div>
         <div className="identity-preview-actions">

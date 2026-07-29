@@ -13,7 +13,7 @@ import {
   LayoutDashboard, Users, Package, ShoppingCart, Truck,
   TrendingDown, BarChart2, Settings, LogOut, ChevronDown,
   Wallet, UserCheck, Menu, X, Archive, ScanLine, UserCog, LogIn,
-  Sun, Moon, Bell, Search, ShieldCheck
+  Sun, Moon, Bell, Search, ShieldCheck, Printer
 } from 'lucide-react'
 import './Layout.css'
 
@@ -27,6 +27,7 @@ export const NAV_ITEMS = [
   { path: '/products',   icon: Package,         labelKey: 'nav.products',  group: 'stock',    permission: 'products' },
   { path: '/stock',      icon: Archive,         labelKey: 'nav.stock',     group: 'stock',    permission: 'stock' },
   { path: '/expenses',   icon: TrendingDown,    labelKey: 'nav.expenses',  group: 'finance',  permission: 'expenses' },
+  { path: '/printer',    icon: Printer,         labelKey: 'nav.printer',   group: 'finance',  permission: 'expenses' },
   { path: '/cash',       icon: Wallet,          labelKey: 'nav.cash',      group: 'finance',  permission: 'cash' },
   { path: '/reports',    icon: BarChart2,       labelKey: 'nav.reports',   group: 'finance',  permission: 'reports' },
   { path: '/security',   icon: ShieldCheck,     labelKey: 'nav.security',  group: 'admin',    permission: 'settings' },
@@ -42,10 +43,79 @@ const GROUPS = {
   admin: 'group.admin',
 }
 
+const ADHKAR_BY_PERIOD = {
+  morning: {
+    label: 'أذكار الصباح',
+    items: [
+      'أصبحنا وأصبح الملك لله، والحمد لله',
+      'اللهم بك أصبحنا وبك أمسينا وبك نحيا وبك نموت وإليك النشور',
+      'رضيت بالله رباً، وبالإسلام ديناً، وبمحمد ﷺ نبياً',
+      'اللهم إني أسألك خير هذا اليوم فتحه ونصره ونوره وبركته وهداه',
+    ],
+  },
+  evening: {
+    label: 'أذكار المساء',
+    items: [
+      'أمسينا وأمسى الملك لله، والحمد لله',
+      'اللهم بك أمسينا وبك أصبحنا وبك نحيا وبك نموت وإليك المصير',
+      'رضيت بالله رباً، وبالإسلام ديناً، وبمحمد ﷺ نبياً',
+      'اللهم إني أسألك خير هذه الليلة وخير ما بعدها',
+    ],
+  },
+  general: {
+    label: 'ذِكــر وطمـأنـيـة',
+    items: [
+      'سبحان الله وبحمده، سبحان الله العظيم',
+      'أستغفر الله العظيم وأتوب إليه',
+      'لا إله إلا الله وحده لا شريك له، له الملك وله الحمد وهو على كل شيء قدير',
+      'الله أكبر، والحمد لله، ولا حول ولا قوة إلا بالله',
+      'اللهم صل وسلم وبارك على نبينا محمد',
+    ],
+  },
+}
+
+function AdhkarTicker() {
+  const [hour, setHour] = useState(() => new Date().getHours())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setHour(new Date().getHours()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const period = hour >= 5 && hour < 12 ? 'morning' : hour >= 17 || hour < 1 ? 'evening' : 'general'
+  const content = ADHKAR_BY_PERIOD[period]
+  // Each half of the marquee must be wider than the largest supported viewport.
+  // Repeating the phrases inside both identical halves keeps the loop seamless.
+  const continuousItems = [...content.items, ...content.items]
+  return (
+    <section className={`adhkar-ticker adhkar-${period}`} dir="rtl" aria-label={content.label}>
+      <div className="adhkar-label">
+        <span className="adhkar-label-icon" aria-hidden="true">✦</span>
+        <strong>{content.label}</strong>
+      </div>
+      <div className="adhkar-viewport">
+        <div className="adhkar-track">
+          {[0, 1].map(copy => (
+            <div className="adhkar-set" key={`${period}-set-${copy}`} aria-hidden={copy === 1}>
+              {continuousItems.map((item, index) => (
+                <span className="adhkar-item" key={`${period}-${copy}-${index}`}>
+                  {item}
+                  <i aria-hidden="true">❖</i>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+      <span className="adhkar-end-mark" aria-hidden="true">۞</span>
+    </section>
+  )
+}
+
 export default function Layout() {
   const { user, logout, hasPermission, displayName, updateProfile, changePassword, setupMfa, enableMfa, disableMfa, regenerateRecoveryCodes } = useAuth()
   const { theme, toggleTheme } = useTheme()
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -155,6 +225,109 @@ export default function Layout() {
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [notificationsOpen])
+
+  useEffect(() => {
+    const dirtyMessage = language === 'ar'
+      ? 'توجد تعديلات غير محفوظة. هل تريد إغلاق النافذة؟'
+      : 'Des modifications ne sont pas enregistrées. Fermer la fenêtre ?'
+    const actionLocks = new WeakMap()
+    let focusTimer = 0
+
+    const getOpenDialogs = () => Array.from(document.querySelectorAll('.modal-overlay'))
+      .filter(overlay => overlay.getClientRects().length > 0)
+    const getTopDialog = () => getOpenDialogs().at(-1)
+    const requestClose = (overlay) => {
+      if (!overlay) return
+      if (overlay.dataset.dialogDirty === 'true' && !window.confirm(dirtyMessage)) return
+      overlay.dataset.dialogAllowClose = 'true'
+      const closeButton = overlay.querySelector('.modal-header .btn-icon, [data-modal-close]')
+      if (closeButton) closeButton.click()
+      else overlay.dispatchEvent(new MouseEvent('click', { bubbles:true }))
+      window.setTimeout(() => delete overlay.dataset.dialogAllowClose, 0)
+    }
+    const focusFirstField = (overlay) => {
+      window.clearTimeout(focusTimer)
+      focusTimer = window.setTimeout(() => {
+        if (!document.body.contains(overlay)) return
+        const target = overlay.querySelector('[autofocus]')
+          || overlay.querySelector('input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled)')
+          || overlay.querySelector('button:not(:disabled)')
+        target?.focus({ preventScroll:true })
+        if (target?.matches('input:not([type="date"]):not([type="datetime-local"]), textarea')) target.select?.()
+      }, 70)
+    }
+    const observer = new MutationObserver(records => {
+      records.forEach(record => record.addedNodes.forEach(node => {
+        if (!(node instanceof HTMLElement)) return
+        if (node.matches('.modal-overlay')) focusFirstField(node)
+        node.querySelectorAll?.('.modal-overlay').forEach(focusFirstField)
+      }))
+    })
+    const handleInput = (event) => {
+      const overlay = event.target.closest?.('.modal-overlay')
+      if (overlay && event.isTrusted) overlay.dataset.dialogDirty = 'true'
+    }
+    const handleClick = (event) => {
+      const overlay = event.target.closest?.('.modal-overlay')
+      if (!overlay) return
+
+      const bodyAction = event.target.closest?.('.modal-body button')
+      if (bodyAction && !bodyAction.disabled) overlay.dataset.dialogDirty = 'true'
+
+      const action = event.target.closest?.('.modal-footer .btn-primary, .modal-footer .btn-success')
+      if (action && !action.disabled) {
+        const dialogs = getOpenDialogs()
+        if (dialogs.length > 1) dialogs.at(-2).dataset.dialogDirty = 'true'
+        const now = Date.now()
+        if (now - (actionLocks.get(action) || 0) < 900) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
+        actionLocks.set(action, now)
+      }
+
+      const label = event.target.closest?.('button')?.textContent?.trim() || ''
+      const isBackdrop = event.target === overlay
+      const isHeaderClose = Boolean(event.target.closest?.('.modal-header .btn-icon, [data-modal-close]'))
+      const isCancelButton = Boolean(
+        event.target.closest?.('.modal-footer .btn-secondary')
+        && /^(annuler|fermer|cancel|close|إلغاء|إغلاق)/i.test(label)
+      )
+      if (
+        overlay.dataset.dialogDirty === 'true'
+        && overlay.dataset.dialogAllowClose !== 'true'
+        && (isBackdrop || isHeaderClose || isCancelButton)
+        && !window.confirm(dirtyMessage)
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+    const handleKeyDown = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      const overlay = getTopDialog()
+      if (!overlay) return
+      event.preventDefault()
+      event.stopPropagation()
+      requestClose(overlay)
+    }
+
+    observer.observe(document.body, { childList:true, subtree:true })
+    document.addEventListener('input', handleInput, true)
+    document.addEventListener('change', handleInput, true)
+    document.addEventListener('click', handleClick, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    getOpenDialogs().forEach(focusFirstField)
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(focusTimer)
+      document.removeEventListener('input', handleInput, true)
+      document.removeEventListener('change', handleInput, true)
+      document.removeEventListener('click', handleClick, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [language])
 
   useEffect(() => {
     setProfileForm({
@@ -299,8 +472,11 @@ export default function Layout() {
     return (
       <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
-          <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt="Maktaba Print" />
-          <span className="logo-text">{visualSettings.app_name || 'Maktaba Print'}</span>
+          <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt={language === 'ar' ? 'مــكـتبة صــبــري' : 'LIBRARY SABRI'} />
+          <span className="logo-text">
+            <strong>{language === 'ar' ? 'مــكـتبة صــبــري' : 'LIBRARY SABRI'}</strong>
+            <small>{language === 'ar' ? 'LIBRARY SABRI' : 'مــكـتبة صــبــري'}</small>
+          </span>
         </div>
 
         <nav className="sidebar-nav">
@@ -371,12 +547,22 @@ export default function Layout() {
           </button>
           <div style={{ flex: 1 }} />
           <button
-            className="btn btn-secondary btn-icon theme-toggle"
+            className={`theme-toggle theme-toggle-${theme}`}
             onClick={toggleTheme}
             title={theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
             aria-label={theme === 'dark' ? 'Activer le mode clair' : 'Activer le mode sombre'}
+            aria-pressed={theme === 'dark'}
           >
-            {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+            <span className="theme-toggle-label" aria-hidden="true">
+              <strong>{theme === 'dark' ? 'DARK' : 'LIGHT'}</strong>
+              <small>MODE</small>
+            </span>
+            <span className="theme-toggle-thumb" aria-hidden="true">
+              <span className="theme-sun"><Sun size={23} /></span>
+              <span className="theme-moon"><Moon size={22} /></span>
+              <i className="theme-star theme-star-one">✦</i>
+              <i className="theme-star theme-star-two">•</i>
+            </span>
           </button>
           <div className="topbar-notifications" ref={notificationsRef}>
             <button
@@ -384,12 +570,16 @@ export default function Layout() {
               onClick={() => setNotificationsOpen(open => !open)}
               title="Notifications"
               aria-label="Notifications"
+              aria-haspopup="menu"
+              aria-expanded={notificationsOpen}
             >
               <Bell size={17} />
-              {notifications.length > 0 && <span>{notifications.length}</span>}
             </button>
+            {notifications.length > 0 && (
+              <span className="notification-count" aria-hidden="true">{notifications.length}</span>
+            )}
             {notificationsOpen && (
-              <div className="notifications-dropdown">
+              <div className="notifications-dropdown" role="menu">
                 <div className="notifications-head">
                   <strong>Notifications</strong>
                   <small>{notifications.length} alerte(s)</small>
@@ -461,6 +651,8 @@ export default function Layout() {
             )}
           </div>
         </header>
+
+        <AdhkarTicker />
 
         <div className="page-wrapper">
           <Outlet />

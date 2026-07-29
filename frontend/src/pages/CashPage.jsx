@@ -4,10 +4,12 @@ import { api, fmt, fmtDateTime, idempotencyHeaders, operationHeaders } from '../
 import { ArrowDownCircle, ArrowUpCircle, Clock3, Lock, RefreshCw, RotateCcw, ShieldCheck, Wallet, WalletCards } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../lib/AuthContext'
+import { useI18n } from '../lib/i18n'
 import './CashPage.css'
 
 export default function CashPage() {
   const { hasPermission } = useAuth()
+  const { language } = useI18n()
   const [current, setCurrent] = useState(null)
   const [sessions, setSessions] = useState([])
   const [transactions, setTransactions] = useState([])
@@ -181,7 +183,9 @@ export default function CashPage() {
           title="Rapprochement caisse"
           ok={reconciliation?.ok}
           detail={reconciliation
-            ? `${reconciliation.transaction_count} حركة · ${reconciliation.payment_count} دفعة · فرق ${fmt(reconciliation.difference)} MAD`
+            ? language === 'ar'
+              ? `${reconciliation.transaction_count} حركة · ${reconciliation.payment_count} دفعة · فرق ${fmt(reconciliation.difference)} درهم`
+              : `${reconciliation.transaction_count} mouvement(s) · ${reconciliation.payment_count} paiement(s) · écart ${fmt(reconciliation.difference)} MAD`
             : 'Vérification...'}
         />
         <IntegrityCard

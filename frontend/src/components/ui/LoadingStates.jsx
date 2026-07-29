@@ -3,7 +3,7 @@ export function PageLoader({ title = 'Chargement', detail = 'Preparation de la p
     <div className="page-loader" role="status" aria-live="polite">
       <div className="page-loader-card">
         <div className="page-loader-icon">
-          <img src="/brand/proerp-logo.svg" alt="" />
+          <img src="/brand/sabri-library.png" alt="" />
         </div>
         <div className="page-loader-copy">
           <strong>{title}</strong>

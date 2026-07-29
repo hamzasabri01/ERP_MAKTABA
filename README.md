@@ -37,6 +37,14 @@ Acces local: `http://localhost:5173`
 
 Identifiants initiaux si la base est vide: `admin` / `admin123`
 
+Le script `setup.ps1` cree une base neuve sans produits, ventes, achats ni
+donnees de demonstration. Pour ajouter volontairement les donnees de formation:
+
+```powershell
+cd backend
+.\venv\Scripts\python.exe seed_training.py
+```
+
 ## Domaines couverts
 
 - Vente comptoir et tickets POS.

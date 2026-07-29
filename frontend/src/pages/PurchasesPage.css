@@ -1,0 +1,231 @@
+.purchases-subtitle {
+  color: var(--text2);
+  font-size: .86rem;
+  margin-top: .2rem;
+}
+
+.purchase-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .85rem;
+}
+
+.purchase-kpi {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+  padding: .9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  transition: transform .18s ease, border-color .18s ease;
+}
+
+.purchase-kpi:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.purchase-kpi-icon {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 10px;
+}
+
+.purchase-kpi-icon.blue { color: var(--accent); background: var(--accent-glow); }
+.purchase-kpi-icon.green { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.purchase-kpi-icon.orange { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.purchase-kpi-icon.red { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+.purchase-kpi div {
+  display: grid;
+  min-width: 0;
+}
+
+.purchase-kpi small {
+  color: var(--text2);
+  font-size: .72rem;
+}
+
+.purchase-kpi strong {
+  overflow: hidden;
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.purchase-eyebrow {
+  color: var(--accent);
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.purchase-form-modal .modal-body {
+  background: color-mix(in srgb, var(--bg3) 42%, var(--bg2));
+}
+
+.purchase-form-modal tbody tr {
+  transition: background .16s ease;
+}
+
+.purchase-form-modal tbody tr.purchase-cost-changed {
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+
+.purchase-lines-section { margin-bottom: 1rem; }
+
+.purchase-lines-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: .75rem;
+}
+
+.purchase-lines-heading h3 {
+  font-size: .95rem;
+  font-weight: 800;
+}
+
+.purchase-lines-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.purchase-lines-table {
+  min-width: 1120px;
+  font-size: .8rem;
+}
+
+.purchase-lines-table th:first-child { min-width: 260px; }
+.purchase-lines-table th:nth-child(2) { width: 88px; }
+.purchase-lines-table th:nth-child(3) { width: 105px; }
+.purchase-lines-table th:nth-child(4) { width: 140px; }
+.purchase-lines-table th:nth-child(5) { width: 165px; }
+.purchase-lines-table th:nth-child(6) { width: 92px; }
+.purchase-lines-table th:nth-last-child(2) { width: 125px; }
+.purchase-lines-table th:last-child { width: 58px; }
+
+.purchase-lines-table th:not(:first-child),
+.purchase-lines-table td:not(:first-child) {
+  text-align: center;
+}
+
+.purchase-lines-table td {
+  padding: .72rem .55rem;
+  vertical-align: middle;
+}
+
+.purchase-lines-table input,
+.purchase-lines-table select {
+  min-height: 44px;
+}
+
+.purchase-lines-table td:not(:first-child) input,
+.purchase-lines-table td:not(:first-child) select {
+  text-align: center;
+  text-align-last: center;
+}
+
+.purchase-line-product select { font-weight: 650; }
+.purchase-line-quantity input { text-align: center; }
+
+.purchase-line-total {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  font-size: .86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.purchase-line-remove .btn {
+  width: 34px;
+  height: 38px;
+  margin-inline: auto;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.purchase-line-remove .btn svg { margin: 0; }
+
+.purchase-conversion,
+.purchase-base-cost,
+.purchase-cost-alert {
+  display: flex;
+  align-items: center;
+  gap: .2rem;
+  margin-top: .3rem;
+  font-size: .68rem;
+}
+
+.purchase-conversion,
+.purchase-base-cost {
+  color: var(--text2);
+}
+
+.purchase-cost-alert {
+  color: var(--warning);
+  font-weight: 700;
+}
+
+.purchase-cost-alert.down {
+  color: var(--success);
+}
+
+.purchase-unit-hint {
+  display: block;
+  margin-top: .25rem;
+  color: var(--text2);
+}
+
+.purchase-stock-in {
+  color: var(--success);
+  font-weight: 800;
+}
+
+.purchases-page .document-row .btn-icon {
+  opacity: .74;
+  transition: opacity .16s ease, transform .16s var(--ease-out);
+}
+.purchases-page .document-row:hover .btn-icon,
+.purchases-page .document-row .btn-icon:focus-visible { opacity: 1; }
+
+.purchases-page .document-row td:first-child { box-shadow: inset 3px 0 0 transparent; }
+.purchases-page .document-row.status-paid td:first-child,
+.purchases-page .document-row.status-received td:first-child { box-shadow: inset 3px 0 0 var(--success); }
+.purchases-page .document-row.status-confirmed td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.purchases-page .document-row.status-partially_paid td:first-child,
+.purchases-page .document-row.status-partially_received td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+.purchases-page .document-row.status-cancelled td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+[dir="rtl"] .purchases-page .document-row td:first-child { box-shadow: inset -3px 0 0 transparent; }
+[dir="rtl"] .purchases-page .document-row.status-paid td:first-child,
+[dir="rtl"] .purchases-page .document-row.status-received td:first-child { box-shadow: inset -3px 0 0 var(--success); }
+[dir="rtl"] .purchases-page .document-row.status-confirmed td:first-child { box-shadow: inset -3px 0 0 var(--accent); }
+[dir="rtl"] .purchases-page .document-row.status-partially_paid td:first-child,
+[dir="rtl"] .purchases-page .document-row.status-partially_received td:first-child { box-shadow: inset -3px 0 0 var(--warning); }
+[dir="rtl"] .purchases-page .document-row.status-cancelled td:first-child { box-shadow: inset -3px 0 0 var(--danger); }
+
+@media (max-width: 980px) {
+  .purchase-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .purchase-kpis { grid-template-columns: 1fr; }
+  .purchase-lines-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .purchase-lines-heading .btn { justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .purchase-kpi,
+  .purchase-form-modal tbody tr { transition: none; }
+}

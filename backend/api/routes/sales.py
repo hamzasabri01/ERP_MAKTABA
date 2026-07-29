@@ -11,13 +11,13 @@ from models.sales import Sale, SaleItem
 from models.client import Client
 from models.product import Product
 from models.stock import StockMovement
-from api.schemas import DocumentPreviewOut, SaleCreate, SaleOut, SaleItemOut, PaymentIn
+from api.schemas import DocumentPreviewOut, SaleCreate, SaleReturnIn, SaleOut, SaleItemOut, PaymentIn
 from api.audit import log_action, model_snapshot
 from api.payments import register_payment
 from api.payments import register_reversal
 from models.payment import Payment
 from core.settings_store import load_settings
-from services.money import calculate_document, decimal_sum, parse_tax_breakdown, policy_from_settings, serialize_tax_breakdown
+from services.money import calculate_document, decimal_sum, parse_tax_breakdown, policy_from_settings, quantize_quantity, serialize_tax_breakdown
 from services.credit import document_paid_total, sync_client_credit, sync_document_paid_amount
 from services.document_numbers import (
     commit_number_allocation,
@@ -38,6 +38,7 @@ from services.document_workflow import (
     validate_payment_amount,
 )
 from services.stock import apply_stock_movement, reverse_stock_movement
+from services.sales_pricing import resolve_sale_items
 
 router = APIRouter()
 
@@ -85,6 +86,27 @@ def _creator_name(user) -> str:
     return (user.full_name or user.username or "").strip()
 
 
+def _stock_targets(item: SaleItem) -> list[tuple[Product, object, str]]:
+    """Expand a school bundle into stock-managed component quantities."""
+    product = item.product
+    if not product:
+        return []
+    if product.product_type == "product":
+        return [(product, item.quantity or 0, f"item:{item.id}")]
+    if product.product_type == "bundle":
+        if not product.bundle_components:
+            raise HTTPException(409, f"Le pack {product.name} ne contient aucun produit")
+        return [
+            (
+                component.component,
+                (item.quantity or 0) * (component.quantity or 0),
+                f"item:{item.id}:component:{component.id}",
+            )
+            for component in product.bundle_components
+        ]
+    return []
+
+
 def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
     items = []
     if include_items:
@@ -95,6 +117,9 @@ def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
         description=i.description or "",
         quantity=i.quantity or 1,
         unit_price=i.unit_price or 0,
+        catalog_unit_price=i.catalog_unit_price or i.unit_price or 0,
+        price_overridden=bool(i.price_overridden),
+        price_override_reason=i.price_override_reason or "",
         purchase_price=i.purchase_price or 0,
         discount=i.discount or 0,
         discount_amount=i.discount_amount or 0,
@@ -109,6 +134,7 @@ def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
         doc_type=s.doc_type or "invoice",
         status=s.status or "draft",
         client_id=s.client_id,
+        parent_id=s.parent_id,
         client_name=s.client.name if s.client else "—",
         date_time=s.date_time,
         due_date=s.due_date,
@@ -166,8 +192,13 @@ def list_sales(
 
 
 @router.post("/preview", response_model=DocumentPreviewOut)
-def preview_sale(body: SaleCreate, user=Depends(get_current_user)):
-    return _preview(_compute_sale([item.model_dump() for item in body.items], body.discount))
+def preview_sale(
+    body: SaleCreate,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    items, _ = resolve_sale_items(db, user, [item.model_dump() for item in body.items])
+    return _preview(_compute_sale(items, body.discount))
 
 
 @router.get("/{sid}", response_model=SaleOut)
@@ -180,6 +211,264 @@ def get_sale(sid: int, db: Session = Depends(get_db), user=Depends(get_current_u
     if not s:
         raise HTTPException(404, "Vente non trouvée")
     return _to_sale_out(s)
+
+
+@router.post("/{sid}/return", response_model=SaleOut, status_code=201)
+def create_sale_return(
+    sid: int,
+    body: SaleReturnIn,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    source = db.query(Sale).options(
+        selectinload(Sale.items).joinedload(SaleItem.product)
+    ).filter(Sale.id == sid).first()
+    if not source or source.doc_type != "invoice" or source.status not in ACTIVE_SALE_STATUSES:
+        raise HTTPException(409, "Seule une facture confirmée peut faire l'objet d'un retour")
+    payload = body.model_dump(mode="json")
+    if claim_idempotency(db, scope=f"sale:{sid}:return", key=idempotency_key, payload=payload, user_id=user.id):
+        existing = db.query(Sale).filter(
+            Sale.parent_id == sid,
+            Sale.doc_type == "credit_note",
+            Sale.notes.like(f"%return-key:{idempotency_key}%"),
+        ).first()
+        if not existing:
+            raise HTTPException(409, "Retour introuvable pour cette opération")
+        return get_sale(existing.id, db, user)
+
+    source_by_id = {item.id: item for item in source.items}
+    submitted = {}
+    for row in body.items:
+        if row.sale_item_id in submitted:
+            raise HTTPException(400, "Une ligne de retour est dupliquée")
+        item = source_by_id.get(row.sale_item_id)
+        if not item:
+            raise HTTPException(400, "Ligne de facture invalide")
+        submitted[row.sale_item_id] = {
+            "quantity": quantize_quantity(row.quantity),
+            "condition": row.condition,
+            "restock": bool(row.restock and row.condition == "resalable"),
+        }
+
+    prior_returns = db.query(SaleItem).join(Sale).filter(
+        Sale.parent_id == source.id,
+        Sale.doc_type == "credit_note",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+    ).all()
+    already_returned = {}
+    for row in prior_returns:
+        # Return lines keep the original sale item id in their description metadata.
+        marker = (row.description or "").split("[source-item:")
+        if len(marker) < 2:
+            continue
+        try:
+            source_item_id = int(marker[-1].split("]", 1)[0])
+        except ValueError:
+            continue
+        already_returned[source_item_id] = quantize_quantity(
+            already_returned.get(source_item_id, 0) + (row.quantity or 0)
+        )
+
+    raw_items = []
+    return_options = {}
+    for source_item_id, options in submitted.items():
+        quantity = options["quantity"]
+        original = source_by_id[source_item_id]
+        remaining = quantize_quantity(original.quantity or 0) - already_returned.get(source_item_id, 0)
+        if quantity > remaining:
+            raise HTTPException(
+                409,
+                f"Quantité retournée supérieure au disponible pour {original.product.name if original.product else original.description}",
+            )
+        product_type = original.product.product_type if original.product else ""
+        should_restock = bool(options["restock"] and product_type in {"product", "bundle"})
+        return_options[source_item_id] = {
+            "condition": options["condition"],
+            "restock": should_restock,
+        }
+        raw_items.append({
+            "product_id": original.product_id,
+            "description": (
+                f"{original.description or (original.product.name if original.product else '')} "
+                f"[source-item:{original.id}] [condition:{options['condition']}] "
+                f"[restock:{1 if should_restock else 0}]"
+            ),
+            "quantity": quantity,
+            "unit_price": original.unit_price or 0,
+            "purchase_price": original.purchase_price or 0,
+            "discount": original.discount or 0,
+            "tax_rate": original.tax_rate or 0,
+            "catalog_unit_price": original.catalog_unit_price or original.unit_price or 0,
+            "price_overridden": original.price_overridden,
+            "price_override_reason": original.price_override_reason or "",
+        })
+    if not raw_items:
+        raise HTTPException(400, "Aucune ligne à retourner")
+
+    calculation = _compute_sale(raw_items, source.discount or 0)
+    exchange_calculation = None
+    exchange_overrides = []
+    if body.resolution == "exchange":
+        if not body.exchange_items:
+            raise HTTPException(400, "Ajoutez au moins un article de remplacement")
+        exchange_rows, exchange_overrides = resolve_sale_items(
+            db, user, [item.model_dump() for item in body.exchange_items]
+        )
+        exchange_calculation = _compute_sale(exchange_rows, 0)
+    elif body.exchange_items:
+        raise HTTPException(400, "Les articles de remplacement sont réservés au mode échange")
+
+    now = datetime.now()
+    allocation = reserve_document_number(db, "sale", "credit_note", document_date=now, created_by=user.id)
+    exchange_allocation = None
+    exchange = None
+    try:
+        credit = Sale(
+            number=allocation.document_number,
+            doc_type="credit_note",
+            status=SALE_CONFIRMED,
+            parent_id=source.id,
+            client_id=source.client_id,
+            date_time=now,
+            notes=f"Retour {source.number} — {body.reason} — résolution:{body.resolution} — return-key:{idempotency_key}",
+            discount=source.discount or 0,
+            payment_mode=body.resolution,
+            paid_amount=0,
+            created_by=user.id,
+            **_document_values(calculation),
+        )
+        db.add(credit)
+        db.flush()
+        return_lines = []
+        for row in calculation["items"]:
+            line = SaleItem(
+                sale_id=credit.id,
+                product_id=row.get("product_id"),
+                description=row.get("description", ""),
+                quantity=row["quantity"],
+                unit_price=row["unit_price"],
+                catalog_unit_price=row.get("catalog_unit_price", row["unit_price"]),
+                price_overridden=row.get("price_overridden", False),
+                price_override_reason=row.get("price_override_reason", ""),
+                purchase_price=row.get("purchase_price", 0),
+                discount=row.get("discount", 0),
+                tax_rate=row.get("tax_rate", 0),
+                discount_amount=row["discount_amount"],
+                tax_amount=row["tax_amount"],
+                total_amount=row["total_amount"],
+                line_total=row["line_total"],
+            )
+            db.add(line)
+            return_lines.append(line)
+        db.flush()
+        for line in return_lines:
+            marker = (line.description or "").split("[source-item:")
+            source_item_id = int(marker[-1].split("]", 1)[0]) if len(marker) > 1 else None
+            if not source_item_id or not return_options[source_item_id]["restock"]:
+                continue
+            for product, quantity, key_suffix in _stock_targets(line):
+                apply_stock_movement(
+                    db, product, "in", quantity,
+                    operation_key=f"sale:{credit.id}:return:{key_suffix}",
+                    user_id=user.id, unit_cost=product.purchase_price or 0,
+                    reference=credit.number, notes=f"Retour client: {body.reason}",
+                    source_type="sale_return", source_id=credit.id, source_line_id=line.id,
+                )
+
+        if exchange_calculation:
+            exchange_allocation = reserve_document_number(
+                db, "sale", "invoice", document_date=now, created_by=user.id
+            )
+            credited = min(exchange_calculation["total_amount"], calculation["total_amount"])
+            exchange = Sale(
+                number=exchange_allocation.document_number,
+                doc_type="invoice",
+                status=SALE_CONFIRMED,
+                parent_id=credit.id,
+                client_id=source.client_id,
+                date_time=now,
+                notes=f"Échange lié à {credit.number} / facture initiale {source.number}",
+                discount=0,
+                payment_mode="exchange_credit",
+                paid_amount=credited,
+                created_by=user.id,
+                **_document_values(exchange_calculation),
+            )
+            db.add(exchange)
+            db.flush()
+            exchange_lines = []
+            for row in exchange_calculation["items"]:
+                line = SaleItem(
+                    sale_id=exchange.id,
+                    product_id=row.get("product_id"),
+                    description=row.get("description", ""),
+                    quantity=row["quantity"],
+                    unit_price=row["unit_price"],
+                    catalog_unit_price=row.get("catalog_unit_price", row["unit_price"]),
+                    price_overridden=row.get("price_overridden", False),
+                    price_override_reason=row.get("price_override_reason", ""),
+                    purchase_price=row.get("purchase_price", 0),
+                    discount=row.get("discount", 0),
+                    tax_rate=row.get("tax_rate", 0),
+                    discount_amount=row["discount_amount"],
+                    tax_amount=row["tax_amount"],
+                    total_amount=row["total_amount"],
+                    line_total=row["line_total"],
+                )
+                db.add(line)
+                exchange_lines.append(line)
+            db.flush()
+            for line in exchange_lines:
+                for product, quantity, key_suffix in _stock_targets(line):
+                    apply_stock_movement(
+                        db, product, "out", quantity,
+                        operation_key=f"sale:{exchange.id}:exchange:{key_suffix}",
+                        user_id=user.id, unit_cost=product.purchase_price or 0,
+                        reference=exchange.number, notes=f"Article de remplacement pour {source.number}",
+                        source_type="sale_exchange", source_id=exchange.id, source_line_id=line.id,
+                    )
+            for override in exchange_overrides:
+                line = exchange_lines[override["line_index"]]
+                log_action(
+                    db, user, "price_override", "sale_item", line.id,
+                    f"Prix d'échange modifié pour {override['product_name']}",
+                    after={"sale_id": exchange.id, **override},
+                )
+            commit_number_allocation(db, exchange_allocation.allocation_id, exchange.id)
+        commit_number_allocation(db, allocation.allocation_id, credit.id)
+        log_action(
+            db, user, "return", "sale", source.id,
+            f"Retour client créé: {credit.number}",
+            after={
+                "credit_note_id": credit.id,
+                "exchange_invoice_id": exchange.id if exchange else None,
+                "resolution": body.resolution,
+                "reason": body.reason,
+                "credit_total": credit.total_amount,
+                "exchange_total": exchange.total_amount if exchange else 0,
+                "price_difference": (
+                    (exchange.total_amount or 0) - (credit.total_amount or 0)
+                    if exchange else -(credit.total_amount or 0)
+                ),
+            },
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if exchange_allocation:
+            void_reserved_allocation(
+                db, exchange_allocation.allocation_id, f"exchange_failed_{type(exc).__name__}"
+            )
+        void_reserved_allocation(db, allocation.allocation_id, f"return_failed_{type(exc).__name__}")
+        raise
+    result = get_sale(credit.id, db, user)
+    result.return_credit_amount = float(credit.total_amount or 0)
+    result.exchange_total = float(exchange.total_amount or 0) if exchange else 0
+    result.price_difference = result.exchange_total - result.return_credit_amount
+    result.exchange_invoice_id = exchange.id if exchange else None
+    result.exchange_invoice_number = exchange.number if exchange else ""
+    return result
 
 
 @router.post("/{sid}/convert-to-invoice", response_model=SaleOut, status_code=201)
@@ -262,6 +551,9 @@ def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depen
                 description=item.description or "",
                 quantity=item.quantity or 1,
                 unit_price=item.unit_price or 0,
+                catalog_unit_price=item.catalog_unit_price or item.unit_price or 0,
+                price_overridden=bool(item.price_overridden),
+                price_override_reason=item.price_override_reason or "",
                 purchase_price=item.purchase_price or 0,
                 discount=item.discount or 0,
                 tax_rate=item.tax_rate if item.tax_rate is not None else 20,
@@ -285,7 +577,7 @@ def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depen
 def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     if money(body.paid_amount) != 0:
         raise HTTPException(400, "Un brouillon ne peut pas contenir de paiement; confirmez puis encaissez")
-    items_data = [i.model_dump() for i in body.items]
+    items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
     document_date = body.date_time or datetime.now()
     allocation = reserve_document_number(
@@ -321,6 +613,9 @@ def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(ge
                 description=item.get("description", ""),
                 quantity=item["quantity"],
                 unit_price=item["unit_price"],
+                catalog_unit_price=item.get("catalog_unit_price", item["unit_price"]),
+                price_overridden=item.get("price_overridden", False),
+                price_override_reason=item.get("price_override_reason", ""),
                 purchase_price=item.get("purchase_price", 0),
                 discount=item.get("discount", 0),
                 tax_rate=item.get("tax_rate", 20),
@@ -330,6 +625,20 @@ def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(ge
                 line_total=item["line_total"],
             )
             db.add(si)
+        db.flush()
+        for override in price_overrides:
+            line = s.items[override["line_index"]] if override["line_index"] < len(s.items) else None
+            log_action(
+                db,
+                user,
+                "price_override",
+                "sale_item",
+                line.id if line else "",
+                f"Prix modifie pour {override['product_name']}: "
+                f"{override['catalog_unit_price']} -> {override['applied_unit_price']}",
+                before={"sale_id": s.id, "unit_price": override["catalog_unit_price"]},
+                after={"sale_id": s.id, **override},
+            )
         commit_number_allocation(db, allocation.allocation_id, s.id)
         log_action(db, user, "create", "sale", s.id, f"Document vente cree: {s.number}", after=model_snapshot(s, ["number", "doc_type", "status", "client_id", "total_amount", "paid_amount"]))
         db.commit()
@@ -357,7 +666,7 @@ def update_sale(
     if money(body.paid_amount) != 0:
         raise HTTPException(400, "Un brouillon ne peut pas contenir de paiement")
     s.version = claim_version(db, Sale, s.id, if_match)
-    items_data = [i.model_dump() for i in body.items]
+    items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
     for k, v in {**body.model_dump(exclude={"items"}), **_document_values(calculation)}.items():
         if hasattr(s, k):
@@ -375,6 +684,9 @@ def update_sale(
             description=item.get("description", ""),
             quantity=item["quantity"],
             unit_price=item["unit_price"],
+            catalog_unit_price=item.get("catalog_unit_price", item["unit_price"]),
+            price_overridden=item.get("price_overridden", False),
+            price_override_reason=item.get("price_override_reason", ""),
             purchase_price=item.get("purchase_price", 0),
             discount=item.get("discount", 0),
             tax_rate=item.get("tax_rate", 20),
@@ -384,6 +696,16 @@ def update_sale(
             line_total=item["line_total"],
         )
         db.add(si)
+    db.flush()
+    for override in price_overrides:
+        line = s.items[override["line_index"]] if override["line_index"] < len(s.items) else None
+        log_action(
+            db, user, "price_override", "sale_item", line.id if line else "",
+            f"Prix modifie pour {override['product_name']}: "
+            f"{override['catalog_unit_price']} -> {override['applied_unit_price']}",
+            before={"sale_id": s.id, "unit_price": override["catalog_unit_price"]},
+            after={"sale_id": s.id, **override},
+        )
     db.commit()
     return get_sale(sid, db, user)
 
@@ -419,38 +741,18 @@ def confirm_sale(
     affects_stock = s.doc_type in ("invoice", "delivery", "credit_note")
     stock_direction = "in" if s.doc_type == "credit_note" else "out"
 
-    if affects_stock and stock_direction == "out":
+    if affects_stock:
         for item in s.items:
-            if item.product_id:
-                p = db.query(Product).filter(Product.id == item.product_id).first()
-                if p and p.product_type == "product":
-                    apply_stock_movement(
-                        db,
-                        p,
-                        stock_direction,
-                        item.quantity or 0,
-                        operation_key=f"sale:{s.id}:confirm:item:{item.id}",
-                        user_id=user.id,
-                        unit_cost=item.purchase_price or p.purchase_price,
-                        reference=s.number,
-                        notes="Mouvement stock confirmation vente",
-                        source_type="sale",
-                        source_id=s.id,
-                        source_line_id=item.id,
-                    )
-
-    if affects_stock and stock_direction == "in":
-        for item in s.items:
-            if item.product_id:
-                p = db.query(Product).filter(Product.id == item.product_id).first()
-                if p and p.product_type == "product":
-                    apply_stock_movement(
-                        db, p, "in", item.quantity or 0, user_id=user.id,
-                        operation_key=f"sale:{s.id}:confirm:item:{item.id}",
-                        unit_cost=item.purchase_price or p.purchase_price,
-                        reference=s.number, notes="Retour stock avoir client",
-                        source_type="sale", source_id=s.id, source_line_id=item.id,
-                    )
+            for product, quantity, key_suffix in _stock_targets(item):
+                apply_stock_movement(
+                    db, product, stock_direction, quantity,
+                    operation_key=f"sale:{s.id}:confirm:{key_suffix}",
+                    user_id=user.id,
+                    unit_cost=product.purchase_price or 0,
+                    reference=s.number,
+                    notes="Retour stock avoir client" if stock_direction == "in" else "Mouvement stock confirmation vente",
+                    source_type="sale", source_id=s.id, source_line_id=item.id,
+                )
 
     s.version = claim_version(db, Sale, s.id, if_match)
     s.status = SALE_CONFIRMED

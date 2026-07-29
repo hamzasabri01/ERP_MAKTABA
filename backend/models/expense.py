@@ -20,5 +20,6 @@ class Expense(Base):
     CATEGORIES = [
         "Loyer", "Salaires", "Fournitures", "Transport",
         "Marketing", "Maintenance", "Taxes & Impôts",
-        "Énergie (eau/élec)", "Communication", "Autre",
+        "Énergie (eau/élec)", "Communication",
+        "Papier impression", "Toner / Encre", "Maintenance imprimante", "Autre",
     ]

@@ -59,13 +59,14 @@ def get_db() -> Generator:
 
 def init_db():
     from models import (  # noqa: F401
-        User, Role, Client, Product, Category, Supplier,
+        User, Role, Client, Product, ProductBundleComponent, Category, Supplier,
         Sale, SaleItem, Purchase, PurchaseItem,
         StockMovement, InventorySession, InventoryCountLine,
         Expense, CashSession, CashTransaction, AuditLog, Payment,
         AuthRateLimitAttempt,
         OperationKey,
         DocumentSequence, DocumentNumberAllocation,
+        PrintJob, PrinterCounter,
     )
     Base.metadata.create_all(bind=engine)
     _migrate_schema()
@@ -75,7 +76,13 @@ def init_db():
 
 def _migrate_schema():
     migrations = {
-        "products": [("updated_at", "DATETIME")],
+        "products": [
+            ("updated_at", "DATETIME"),
+            ("pricing_mode", "VARCHAR(20) NOT NULL DEFAULT 'fixed'"),
+            ("purchase_unit", "VARCHAR(20) NOT NULL DEFAULT 'pcs'"),
+            ("purchase_to_base_factor", "NUMERIC(18,4) NOT NULL DEFAULT 1"),
+            ("allow_fractional_sale", "BOOLEAN NOT NULL DEFAULT 0"),
+        ],
         "roles": [("description", "VARCHAR(300)")],
         "users": [
             ("mfa_enabled", "BOOLEAN DEFAULT 0"),
@@ -103,6 +110,9 @@ def _migrate_schema():
             ("discount_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
             ("tax_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
             ("total_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
+            ("catalog_unit_price", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
+            ("price_overridden", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("price_override_reason", "TEXT NOT NULL DEFAULT ''"),
         ],
         "purchases": [
             ("version", "INTEGER NOT NULL DEFAULT 1"),
@@ -119,6 +129,10 @@ def _migrate_schema():
             ("discount_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
             ("tax_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
             ("total_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
+            ("purchase_unit", "VARCHAR(20) NOT NULL DEFAULT ''"),
+            ("conversion_factor", "NUMERIC(18,4) NOT NULL DEFAULT 1"),
+            ("base_quantity", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
+            ("received_base_quantity", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
         ],
         "payments": [
             ("kind", "VARCHAR(20) NOT NULL DEFAULT 'payment'"),
@@ -162,6 +176,55 @@ def _migrate_schema():
                 pass
         conn.commit()
 
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS app_migrations "
+            "(name VARCHAR(100) PRIMARY KEY, applied_at DATETIME NOT NULL)"
+        ))
+        pricing_backfill = conn.execute(text(
+            "SELECT 1 FROM app_migrations WHERE name='service_pricing_mode_v1'"
+        )).fetchone()
+        if not pricing_backfill:
+            # Existing services were historically sold with an editable price in POS.
+            conn.execute(text(
+                "UPDATE products SET pricing_mode='editable' WHERE product_type='service'"
+            ))
+            conn.execute(text(
+                "INSERT INTO app_migrations(name,applied_at) "
+                "VALUES('service_pricing_mode_v1',CURRENT_TIMESTAMP)"
+            ))
+        units_backfill = conn.execute(text(
+            "SELECT 1 FROM app_migrations WHERE name='product_units_v1'"
+        )).fetchone()
+        if not units_backfill:
+            conn.execute(text(
+                "UPDATE products SET purchase_unit=coalesce(nullif(purchase_unit,''),unit,'pcs'), "
+                "purchase_to_base_factor=coalesce(nullif(purchase_to_base_factor,0),1)"
+            ))
+            conn.execute(text(
+                "UPDATE purchase_items SET "
+                "conversion_factor=coalesce(nullif(conversion_factor,0),1), "
+                "base_quantity=quantity*coalesce(nullif(conversion_factor,0),1), "
+                "received_base_quantity=received_quantity*coalesce(nullif(conversion_factor,0),1)"
+            ))
+            conn.execute(text(
+                "INSERT INTO app_migrations(name,applied_at) VALUES('product_units_v1',CURRENT_TIMESTAMP)"
+            ))
+        for role_name in ("admin", "manager", "cashier"):
+            row = conn.execute(
+                text("SELECT id,permissions FROM roles WHERE name=:name"),
+                {"name": role_name},
+            ).fetchone()
+            if not row:
+                continue
+            permissions = {p.strip() for p in (row[1] or "").split(",") if p.strip()}
+            if "all" not in permissions:
+                permissions.add("sales.service_price_edit")
+                conn.execute(
+                    text("UPDATE roles SET permissions=:permissions WHERE id=:id"),
+                    {"permissions": ",".join(sorted(permissions)), "id": row[0]},
+                )
+
 
 def _create_indexes():
     indexes = [
@@ -176,6 +239,7 @@ def _create_indexes():
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movement_reversal ON stock_movements(reverses_movement_id)",
         "CREATE INDEX IF NOT EXISTS ix_stock_source ON stock_movements(source_type, source_id)",
         "CREATE INDEX IF NOT EXISTS ix_stock_warehouse ON stock_movements(warehouse_code)",
+        "CREATE INDEX IF NOT EXISTS ix_bundle_component_product ON product_bundle_components(component_product_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_created    ON audit_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_audit_entity     ON audit_logs(entity, entity_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_user       ON audit_logs(created_by)",
@@ -213,8 +277,8 @@ def _seed_defaults():
         if db.query(Role).count() == 0:
             roles = [
                 Role(name="admin",      description="Acces complet a tous les modules", permissions="all"),
-                Role(name="manager",    description="Supervision des operations commerciales et rapports", permissions="dashboard,sales,purchases,reports,clients,products,suppliers,cash,cash.read,cash.open,cash.close,cash.transaction,cash.adjust"),
-                Role(name="cashier",    description="Vente, POS, caisse et consultation clients/produits", permissions="dashboard,pos,sales,clients,products,cash,cash.read,cash.open,cash.close,cash.transaction,cash.adjust"),
+                Role(name="manager",    description="Supervision des operations commerciales et rapports", permissions="dashboard,sales,sales.service_price_edit,purchases,reports,clients,products,suppliers,cash,cash.read,cash.open,cash.close,cash.transaction,cash.adjust"),
+                Role(name="cashier",    description="Vente, POS, caisse et consultation clients/produits", permissions="dashboard,pos,sales,sales.service_price_edit,clients,products,cash,cash.read,cash.open,cash.close,cash.transaction,cash.adjust"),
                 Role(name="warehouse",  description="Gestion catalogue, stock et achats", permissions="dashboard,products,stock,purchases,suppliers"),
             ]
             db.add_all(roles)

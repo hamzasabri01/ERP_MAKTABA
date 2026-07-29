@@ -1,16 +1,18 @@
 // src/pages/PurchasesPage.jsx
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, fmt, fmtDate, fmtDateTime, operationHeaders, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
-import { Plus, Search, Eye, Trash2, Check, CreditCard, Truck, Printer, Download, X } from 'lucide-react'
+import { api, fmt, fmtDate, fmtDateTime, isVatEnabled, operationHeaders, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
+import { Plus, Search, Eye, Edit2, Trash2, Check, CreditCard, Truck, Printer, Download, X, Boxes, AlertTriangle, TrendingUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TableLoadingRow } from '../components/ui/LoadingStates'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { getCompanyName, getLogoUrl } from '../lib/brand'
+import { downloadPurchasePdf, previewPurchasePdf } from '../lib/documentPdf'
 import './SalesPrint.css'
+import './PurchasesPage.css'
 
 const STATUS_LABELS = { draft:'Brouillon', confirmed:'Confirmé', partially_received:'Partiellement reçu', received:'Reçu', partially_paid:'Partiellement payé', paid:'Payé', cancelled:'Annulé' }
 const EMPTY_PURCHASE = { doc_type:'order', supplier_id:'', date_time:'', notes:'', discount:0, items:[] }
-const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, discount:0, tax_rate:20 }
+const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, purchase_unit:'pcs', conversion_factor:1, discount:0, tax_rate:20 }
 const PAGE_SIZE = 80
 
 function buildPurchasePayload(form) {
@@ -44,6 +46,10 @@ export default function PurchasesPage() {
   const [selected, setSelected]   = useState(null)
   const [form, setForm]           = useState(EMPTY_PURCHASE)
   const [saving, setSaving]       = useState(false)
+  const [paymentSaving, setPaymentSaving] = useState(false)
+  const [receiving, setReceiving] = useState(false)
+  const [downloadingId, setDownloadingId] = useState(null)
+  const [previewingPdf, setPreviewingPdf] = useState(false)
   const [payAmt, setPayAmt]       = useState(0)
   const [payMode, setPayMode]     = useState('cash')
   const [settings, setSettings]   = useState({})
@@ -53,7 +59,17 @@ export default function PurchasesPage() {
   const [serverPreview, setServerPreview] = useState(null)
   const currency = serverPreview?.currency_code || settings.currency || 'MAD'
   const paymentModes = SETTLEMENT_METHODS
+  const vatEnabled = isVatEnabled(settings)
   const taxRates = String(settings.tax_rates || '0,7,10,14,20').split(',').map(Number).filter(Number.isFinite)
+  const productMap = useMemo(() => new Map(products.map(product => [Number(product.id), product])), [products])
+  const purchaseStats = useMemo(() => purchases.reduce((stats, purchase) => {
+    const total = Number(purchase.total_amount || 0)
+    const paid = Number(purchase.paid_amount || 0)
+    stats.total += total
+    stats.remaining += Math.max(0, total - paid)
+    if (['confirmed', 'partially_received'].includes(purchase.status)) stats.awaiting += 1
+    return stats
+  }, { total: 0, remaining: 0, awaiting: 0 }), [purchases])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -91,6 +107,35 @@ export default function PurchasesPage() {
   useEffect(() => { setPage(1) }, [q])
 
   const openCreate = () => { setForm({ ...EMPTY_PURCHASE, items:[{...EMPTY_ITEM}] }); setServerPreview(null); setSelected(null); setModal('form') }
+  const openEdit = async (summary) => {
+    try {
+      const { data: purchase } = await api.get(`/purchases/${summary.id}`)
+      const items = (purchase.items || []).map(item => ({
+        product_id:item.product_id || '',
+        description:item.product_name || item.description || '',
+        quantity:Math.max(1, Math.trunc(Number(item.quantity) || 1)),
+        unit_price:item.unit_price,
+        purchase_unit:item.purchase_unit || 'pcs',
+        conversion_factor:item.conversion_factor || 1,
+        discount:item.discount || 0,
+        tax_rate:item.tax_rate || 0,
+      }))
+      setForm({
+        doc_type:purchase.doc_type,
+        supplier_id:purchase.supplier_id || '',
+        date_time:purchase.date_time?.slice(0, 16) || '',
+        expected_date:purchase.expected_date?.slice(0, 10) || '',
+        notes:purchase.notes || '',
+        discount:purchase.discount || 0,
+        items:items.length ? items : [{ ...EMPTY_ITEM }],
+      })
+      setServerPreview(null)
+      setSelected(purchase)
+      setModal('form')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Impossible de charger la commande')
+    }
+  }
   const openView   = async (p) => {
     const [purchaseRes, paymentRes, auditRes] = await Promise.allSettled([
       api.get(`/purchases/${p.id}`),
@@ -103,13 +148,29 @@ export default function PurchasesPage() {
     setTimeline(auditRes.status === 'fulfilled' ? auditRes.value.data || [] : [])
     setModal('view')
   }
-  const printDocument = () => setTimeout(() => window.print(), 50)
+  const printDocument = async () => {
+    if (!selected || previewingPdf) return
+    const previewWindow = window.open('', '_blank')
+    if (previewWindow) {
+      previewWindow.document.title = 'Préparation du PDF…'
+      previewWindow.document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">Préparation du PDF…</p>'
+    }
+    setPreviewingPdf(true)
+    try {
+      await previewPurchasePdf(selected, settings, previewWindow)
+    } catch (error) {
+      previewWindow?.close()
+      toast.error('Impossible de préparer le PDF')
+    } finally {
+      setPreviewingPdf(false)
+    }
+  }
 
   const openReceive = async (p) => {
     try {
       const { data } = await api.get(`/purchases/${p.id}`)
       setSelected(data)
-      setReceiveQuantities(Object.fromEntries(data.items.map(item => [item.id, item.remaining_quantity])))
+      setReceiveQuantities(Object.fromEntries(data.items.map(item => [item.id, Math.max(0, Math.trunc(Number(item.remaining_quantity) || 0))])))
       setModal('receive')
     } catch(e) { toast.error(e.response?.data?.detail||'Erreur') }
   }
@@ -118,8 +179,17 @@ export default function PurchasesPage() {
       .map(item => ({ item_id:item.id, quantity:Number(receiveQuantities[item.id] || 0) }))
       .filter(item => item.quantity > 0)
     if (!items.length) return toast.error('Saisissez au moins une quantité reçue')
+    const invalidItem = items.find(item => !Number.isInteger(item.quantity) || item.quantity <= 0)
+    if (invalidItem) return toast.error('Les quantités reçues doivent être des nombres entiers positifs')
+    const exceedsRemaining = items.find(received => {
+      const line = selected.items.find(item => item.id === received.item_id)
+      return received.quantity > Number(line?.remaining_quantity || 0)
+    })
+    if (exceedsRemaining) return toast.error('Une quantité reçue dépasse la quantité restante')
+    setReceiving(true)
     try { await api.post(`/purchases/${selected.id}/receive`, { items }, { headers: operationHeaders(selected.version) }); toast.success('Réception enregistrée, stock mis à jour'); setModal(null); load() }
     catch(e) { toast.error(e.response?.data?.detail||'Erreur') }
+    finally { setReceiving(false) }
   }
   const handleConfirm = async (p) => {
     try { await api.post(`/purchases/${p.id}/confirm`, {}, { headers: operationHeaders(p.version) }); toast.success('Commande confirmée'); load() }
@@ -132,11 +202,14 @@ export default function PurchasesPage() {
     catch(e) { toast.error(e.response?.data?.detail||'Erreur') }
   }
   const handleDownload = async (p) => {
+    if (downloadingId === p.id) return
+    setDownloadingId(p.id)
     try {
       const { data } = await api.get(`/purchases/${p.id}`)
-      downloadHtmlFile(`${data.number || 'achat'}.html`, buildPurchaseDocumentHtml(data, settings))
-      toast.success('Document telecharge')
-    } catch(e) { toast.error(e.response?.data?.detail || 'Telechargement impossible') }
+      await downloadPurchasePdf(data, settings)
+      toast.success('PDF téléchargé')
+    } catch(e) { toast.error(e.response?.data?.detail || 'Téléchargement PDF impossible') }
+    finally { setDownloadingId(null) }
   }
   const exportList = () => {
     const rows = purchases.map(p => ({
@@ -164,21 +237,38 @@ export default function PurchasesPage() {
   }
   const handlePayment = async () => {
     if (!payAmt || +payAmt<=0) return toast.error('Montant invalide')
+    const remaining = Number(selected.total_amount || 0) - Number(selected.paid_amount || 0)
+    if (+payAmt > remaining + 0.001) return toast.error(`Le paiement ne peut pas dépasser le reste de ${fmt(remaining)} ${currency}`)
+    setPaymentSaving(true)
     try { await api.post(`/purchases/${selected.id}/payment`,{amount:+payAmt,payment_mode:payMode},{ headers:operationHeaders(selected.version) }); toast.success('Paiement enregistré'); setModal(null); load() }
     catch(e) { toast.error(e.response?.data?.detail||'Erreur') }
+    finally { setPaymentSaving(false) }
   }
 
   const addItem = () => setForm(f=>({...f,items:[...f.items,{...EMPTY_ITEM}]}))
   const removeItem = (i) => setForm(f=>({...f,items:f.items.filter((_,idx)=>idx!==i)}))
   const updateItem = (i,key,val) => setForm(f=>{
     const items=[...f.items]; items[i]={...items[i],[key]:val}
-    if(key==='product_id'&&val){ const p=products.find(p=>p.id===+val); if(p){items[i].unit_price=p.purchase_price;items[i].description=p.name;items[i].tax_rate=p.tax_rate} }
+    if(key==='product_id'&&!val){
+      items[i] = { ...items[i], product_id:'', description:'', unit_price:0, purchase_unit:'pcs', conversion_factor:1, tax_rate:0 }
+    }
+    if(key==='product_id'&&val){
+      const p=products.find(p=>p.id===+val)
+      if(p){
+        const factor=Number(p.purchase_to_base_factor||1)
+        items[i].unit_price=Number(p.purchase_price||0)*factor
+        items[i].description=p.name
+        items[i].tax_rate=vatEnabled ? p.tax_rate : 0
+        items[i].purchase_unit=p.purchase_unit||p.unit||'pcs'
+        items[i].conversion_factor=factor
+      }
+    }
     return {...f,items}
   })
 
   const totals = (form.items||[]).reduce((acc,i)=>{
     const line=(i.quantity||1)*(i.unit_price||0)*(1-(i.discount||0)/100)
-    const lt=line*(1-(form.discount||0)/100); const tax=lt*(i.tax_rate ?? 0)/100
+    const lt=line*(1-(form.discount||0)/100); const tax=vatEnabled ? lt*(i.tax_rate ?? 0)/100 : 0
     return {sub:acc.sub+lt, tax:acc.tax+tax, total:acc.total+lt+tax}
   },{sub:0,tax:0,total:0})
   const exactTotals = serverPreview
@@ -202,24 +292,53 @@ export default function PurchasesPage() {
 
   const handleSave = async () => {
     if(!(form.items||[]).length) return toast.error('Ajoutez au moins une ligne')
+    if (!form.supplier_id) return toast.error('Sélectionnez un fournisseur')
+    const invalidLine = form.items.findIndex(item =>
+      !item.product_id
+      || !Number.isInteger(Number(item.quantity))
+      || Number(item.quantity) <= 0
+      || !Number.isFinite(Number(item.conversion_factor))
+      || Number(item.conversion_factor) <= 0
+      || !Number.isFinite(Number(item.unit_price))
+      || Number(item.unit_price) <= 0
+      || Number(item.discount) < 0
+      || Number(item.discount) > 100
+    )
+    if (invalidLine >= 0) return toast.error(`Vérifiez le produit, la quantité, la conversion, le prix et la remise de la ligne ${invalidLine + 1}`)
     setSaving(true)
     try {
       const payload = buildPurchasePayload(form)
       const { data: exact } = await api.post('/purchases/preview', payload)
       setServerPreview(exact)
-      await api.post('/purchases',payload); toast.success('Commande créée'); setModal(null); load()
+      if (selected) {
+        await api.put(`/purchases/${selected.id}`, payload, { headers:operationHeaders(selected.version, { idempotent:false }) })
+        toast.success('Commande mise à jour')
+      } else {
+        await api.post('/purchases',payload)
+        toast.success('Commande créée')
+      }
+      setModal(null); load()
     } catch(e){toast.error(e.response?.data?.detail||'Erreur')}
     finally{setSaving(false)}
   }
 
   return (
-    <div className="page-content">
+    <div className="page-content purchases-page">
       <div className="page-header">
-        <h1 className="page-title">Achats</h1>
+        <div>
+          <h1 className="page-title">Achats</h1>
+          <p className="purchases-subtitle">Commandes, conversions d’unités et réceptions fournisseur</p>
+        </div>
         <div className="toolbar">
           <button className="btn btn-secondary" onClick={exportList} disabled={loading || purchases.length === 0}><Download size={16}/> Export CSV</button>
           <button className="btn btn-primary" onClick={openCreate}><Plus size={16}/> Nouvelle commande</button>
         </div>
+      </div>
+      <div className="purchase-kpis">
+        <div className="purchase-kpi"><span className="purchase-kpi-icon blue"><Boxes size={19}/></span><div><small>Commandes affichées</small><strong>{purchases.length}</strong></div></div>
+        <div className="purchase-kpi"><span className="purchase-kpi-icon green"><TrendingUp size={19}/></span><div><small>Montant commandé</small><strong>{fmt(purchaseStats.total)} MAD</strong></div></div>
+        <div className="purchase-kpi"><span className="purchase-kpi-icon orange"><Truck size={19}/></span><div><small>Réceptions en attente</small><strong>{purchaseStats.awaiting}</strong></div></div>
+        <div className="purchase-kpi"><span className="purchase-kpi-icon red"><CreditCard size={19}/></span><div><small>Reste à payer</small><strong>{fmt(purchaseStats.remaining)} MAD</strong></div></div>
       </div>
       <div className="card" style={{padding:0}}>
         <div style={{ padding:'1rem', borderBottom:'1px solid var(--border)' }}>
@@ -236,7 +355,7 @@ export default function PurchasesPage() {
               : loadError ? <tr><td colSpan={8}><LoadError message={loadError} onRetry={load} /></td></tr>
               : purchases.length===0 ? <tr><td colSpan={8}><div className="empty-state"><Truck size={40}/><p>Aucune commande</p></div></td></tr>
               : purchases.map(p=>(
-                <tr key={p.id}>
+                <tr key={p.id} className={`document-row status-${p.status}`}>
                   <td><span className="font-mono text-sm">{p.number}</span></td>
                   <td>{p.supplier_name}</td>
                   <td className="text-muted text-sm">{fmtDate(p.date_time)}</td>
@@ -247,8 +366,11 @@ export default function PurchasesPage() {
                   <td>
                     <div className="flex gap-2">
                       <button className="btn btn-secondary btn-sm btn-icon" onClick={()=>openView(p)} title="Voir"><Eye size={14}/></button>
-                      <button className="btn btn-secondary btn-sm btn-icon" onClick={()=>handleDownload(p)} title="Telecharger"><Download size={14}/></button>
+                      <button className="btn btn-secondary btn-sm btn-icon" disabled={downloadingId === p.id} onClick={()=>handleDownload(p)} title="Télécharger PDF">
+                        {downloadingId === p.id ? <span className="spinner" style={{width:14,height:14}}/> : <Download size={14}/>}
+                      </button>
                       {p.status==='draft'&&<>
+                        <button className="btn btn-secondary btn-sm btn-icon" onClick={()=>openEdit(p)} title="Modifier"><Edit2 size={14}/></button>
                         <button className="btn btn-success btn-sm btn-icon" onClick={()=>handleConfirm(p)} title="Confirmer"><Check size={14}/></button>
                         <button className="btn btn-danger btn-sm btn-icon" onClick={()=>handleDelete(p)} title="Supprimer"><Trash2 size={14}/></button>
                       </>}
@@ -280,8 +402,8 @@ export default function PurchasesPage() {
 
       {modal==='form'&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setModal(null)}>
-          <div className="modal modal-xl">
-            <div className="modal-header"><h2>Nouvelle commande d'achat</h2><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setModal(null)}>✕</button></div>
+          <div className="modal modal-xl purchase-form-modal">
+            <div className="modal-header"><div><span className="purchase-eyebrow">Approvisionnement</span><h2>{selected ? "Modifier la commande d'achat" : "Nouvelle commande d'achat"}</h2></div><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setModal(null)}>✕</button></div>
             <div className="modal-body">
               <div className="form-grid form-grid-3" style={{gap:'1rem',marginBottom:'1.5rem'}}>
                 <div className="form-group">
@@ -308,32 +430,56 @@ export default function PurchasesPage() {
                   <input type="number" min="0" max="100" step="0.01" value={form.discount || 0} onChange={e=>setForm(f=>({...f,discount:e.target.value}))} />
                 </div>
               </div>
-              <div style={{marginBottom:'1rem'}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.75rem'}}>
+              <div className="purchase-lines-section">
+                <div className="purchase-lines-heading">
                   <h3>Articles</h3>
-                  <button className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14}/> Ligne</button>
+                  <button className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14}/> Ajouter une ligne</button>
                 </div>
-                <div className="table-wrap">
-                  <table style={{fontSize:'.8rem'}}>
-                    <thead><tr><th style={{minWidth:180}}>Produit</th><th style={{width:80}}>Qté</th><th style={{width:120}}>Prix unit.</th><th style={{width:80}}>Remise%</th><th style={{width:80}}>TVA%</th><th style={{width:120}}>Total</th><th style={{width:40}}></th></tr></thead>
+                <div className="purchase-lines-table-wrap">
+                  <table className="purchase-lines-table">
+                    <thead><tr><th>Produit</th><th>Qté achat</th><th>Unité</th><th>Conversion</th><th>Prix/unité achat</th><th>Remise %</th>{vatEnabled ? <th>TVA %</th> : null}<th>Total</th><th aria-label="Actions"></th></tr></thead>
                     <tbody>
                       {form.items.map((item,i)=>{
                         const lt=(item.quantity||1)*(item.unit_price||0)
+                        const product = productMap.get(Number(item.product_id))
+                        const factor = Number(item.conversion_factor || 1)
+                        const baseCost = factor > 0 ? Number(item.unit_price || 0) / factor : 0
+                        const previousCost = Number(product?.purchase_price || 0)
+                        const costDelta = previousCost > 0 ? ((baseCost - previousCost) / previousCost) * 100 : 0
                         return(
-                          <tr key={i}>
-                            <td>
-                              <select value={item.product_id||''} onChange={e=>updateItem(i,'product_id',e.target.value)} style={{marginBottom:'.25rem'}}>
+                          <tr key={i} className={Math.abs(costDelta) >= 5 ? 'purchase-cost-changed' : ''}>
+                            <td className="purchase-line-product">
+                              <select value={item.product_id||''} onChange={e=>updateItem(i,'product_id',e.target.value)}>
                                 <option value="">— Produit —</option>
                                 {products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
-                              <input value={item.description||''} onChange={e=>updateItem(i,'description',e.target.value)} placeholder="Description..." />
                             </td>
-                            <td><input type="number" min="0.01" step="0.01" value={item.quantity} onChange={e=>updateItem(i,'quantity',+e.target.value||1)} /></td>
-                            <td><input type="number" min="0" step="0.01" value={item.unit_price} onChange={e=>updateItem(i,'unit_price',+e.target.value||0)} /></td>
+                            <td className="purchase-line-quantity"><input
+                              aria-label="Quantité achetée"
+                              type="number"
+                              inputMode="numeric"
+                              min="1"
+                              step="1"
+                              value={item.quantity}
+                              onKeyDown={e => {
+                                if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+                              }}
+                              onChange={e=>updateItem(i,'quantity',Math.max(1, Math.trunc(Number(e.target.value)||1)))}
+                            /></td>
+                            <td><input value={item.purchase_unit||''} onChange={e=>updateItem(i,'purchase_unit',e.target.value)} /></td>
+                            <td>
+                              <input type="number" min="0.0001" step="0.0001" value={item.conversion_factor||1} onChange={e=>updateItem(i,'conversion_factor',+e.target.value||1)} />
+                              <small className="purchase-conversion">{fmt(item.quantity || 0, 2)} {item.purchase_unit || 'unité'} → <strong>{fmt((item.quantity||0)*factor,2)} {product?.unit || 'unité(s) stock'}</strong></small>
+                            </td>
+                            <td>
+                              <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e=>updateItem(i,'unit_price',+e.target.value||0)} />
+                              <small className="purchase-base-cost">{fmt(baseCost)} {currency}/{product?.unit || 'unité'}</small>
+                              {product && Math.abs(costDelta) >= 5 ? <small className={`purchase-cost-alert ${costDelta > 0 ? 'up' : 'down'}`}><AlertTriangle size={11}/>{costDelta > 0 ? '+' : ''}{fmt(costDelta, 1)}% vs ancien coût</small> : null}
+                            </td>
                             <td><input type="number" min="0" max="100" step="0.01" value={item.discount || 0} onChange={e=>updateItem(i,'discount',e.target.value)} /></td>
-                            <td><select value={item.tax_rate} onChange={e=>updateItem(i,'tax_rate',+e.target.value)}>{taxRates.map(r=><option key={r} value={r}>{r}%</option>)}</select></td>
-                            <td className="font-semibold">{fmt(lt)} {currency}</td>
-                            <td><button className="btn btn-danger btn-sm btn-icon" onClick={()=>removeItem(i)}>✕</button></td>
+                            {vatEnabled ? <td><select value={item.tax_rate} onChange={e=>updateItem(i,'tax_rate',+e.target.value)}>{taxRates.map(r=><option key={r} value={r}>{r}%</option>)}</select></td> : null}
+                            <td className="purchase-line-total">{fmt(lt)} {currency}</td>
+                            <td className="purchase-line-remove"><button aria-label="Supprimer la ligne" title="Supprimer la ligne" className="btn btn-danger btn-sm btn-icon" onClick={()=>removeItem(i)}><X size={14}/></button></td>
                           </tr>
                         )
                       })}
@@ -342,7 +488,7 @@ export default function PurchasesPage() {
                 </div>
                 <div style={{textAlign:'right',marginTop:'1rem',padding:'1rem',background:'var(--bg3)',borderRadius:'var(--radius-sm)',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-end'}}>
                   <div className="text-sm text-muted">Sous-total: <strong>{fmt(exactTotals.sub)} {currency}</strong></div>
-                  <div className="text-sm text-muted">TVA: <strong>{fmt(exactTotals.tax)} {currency}</strong></div>
+                  {vatEnabled ? <div className="text-sm text-muted">TVA: <strong>{fmt(exactTotals.tax)} {currency}</strong></div> : null}
                   <div style={{fontSize:'1.1rem',fontWeight:700}}>Total: <span style={{color:'var(--accent)'}}>{fmt(exactTotals.total)} {currency}</span></div>
                   <small className="text-muted">{serverPreview ? 'Total exact calculé par le serveur' : 'Vérification du total en cours…'}</small>
                 </div>
@@ -350,7 +496,7 @@ export default function PurchasesPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setModal(null)}>Annuler</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving?<span className="spinner" style={{width:16,height:16}}/>:null} Créer commande</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving?<span className="spinner" style={{width:16,height:16}}/>:null} {selected ? 'Enregistrer' : 'Créer commande'}</button>
             </div>
           </div>
         </div>
@@ -370,14 +516,14 @@ export default function PurchasesPage() {
               </div>
               <div className="table-wrap">
                 <table style={{fontSize:'.875rem'}}>
-                  <thead><tr><th>Produit</th><th>Qté</th><th>Reçu</th><th>Prix</th><th>TVA</th><th>Total</th></tr></thead>
+                  <thead><tr><th>Produit</th><th>Qté</th><th>Reçu</th><th>Prix</th>{vatEnabled ? <th>TVA</th> : null}<th>Total</th></tr></thead>
                   <tbody>
-                    {selected.items.map(i=><tr key={i.id}><td>{i.product_name||i.description}</td><td>{i.quantity}</td><td>{i.received_quantity}</td><td>{fmt(i.unit_price)} {selected.currency_code || currency}</td><td>{i.tax_rate}%</td><td className="font-semibold">{fmt(i.line_total)} {selected.currency_code || currency}</td></tr>)}
+                    {selected.items.map(i=><tr key={i.id}><td>{i.product_name||i.description}</td><td>{i.quantity}</td><td>{i.received_quantity}</td><td>{fmt(i.unit_price)} {selected.currency_code || currency}</td>{vatEnabled ? <td>{i.tax_rate}%</td> : null}<td className="font-semibold">{fmt(i.line_total)} {selected.currency_code || currency}</td></tr>)}
                   </tbody>
                 </table>
               </div>
               <div style={{textAlign:'right',marginTop:'1rem'}}>
-                {(selected.tax_breakdown || []).map(row => <div key={row.rate} className="text-sm text-muted">TVA {fmt(row.rate)}%: {fmt(row.tax_amount)} {selected.currency_code || currency}</div>)}
+                {vatEnabled ? (selected.tax_breakdown || []).map(row => <div key={row.rate} className="text-sm text-muted">TVA {fmt(row.rate)}%: {fmt(row.tax_amount)} {selected.currency_code || currency}</div>) : null}
                 <div style={{fontWeight:700,fontSize:'1.1rem'}}>Total: <span style={{color:'var(--accent)'}}>{fmt(selected.total_amount)} {selected.currency_code || currency}</span></div>
               </div>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:'1rem', marginTop:'1rem' }}>
@@ -402,8 +548,8 @@ export default function PurchasesPage() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={printDocument}>
-                <Printer size={15} /> PDF / Imprimer
+              <button className="btn btn-secondary" onClick={printDocument} disabled={previewingPdf}>
+                {previewingPdf ? <span className="spinner" style={{width:15,height:15}}/> : <Printer size={15}/>} PDF / Imprimer
               </button>
               <button className="btn btn-secondary" onClick={()=>setModal(null)}>Fermer</button>
             </div>
@@ -422,7 +568,10 @@ export default function PurchasesPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setModal(null)}>Annuler</button>
-              <button className="btn btn-success" onClick={handlePayment}><Check size={15}/> Confirmer</button>
+              <button className="btn btn-success" onClick={handlePayment} disabled={paymentSaving}>
+                {paymentSaving ? <span className="spinner" style={{width:15,height:15}}/> : <Check size={15}/>}
+                Confirmer
+              </button>
             </div>
           </div>
         </div>
@@ -430,20 +579,33 @@ export default function PurchasesPage() {
 
       {modal==='receive'&&selected&&(
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setModal(null)}>
-          <div className="modal modal-lg">
-            <div className="modal-header"><h2>Réception {selected.number}</h2><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setModal(null)}>✕</button></div>
+          <div className="modal modal-lg purchase-receive-modal">
+            <div className="modal-header"><div><span className="purchase-eyebrow">Entrée en stock</span><h2>Réception {selected.number}</h2></div><button className="btn btn-secondary btn-sm btn-icon" onClick={()=>setModal(null)}>✕</button></div>
             <div className="modal-body">
               <p className="text-muted text-sm" style={{marginBottom:'1rem'}}>Indiquez uniquement les quantités reçues maintenant. Le stock ne sera augmenté que de ces quantités.</p>
               <div className="table-wrap">
-                <table><thead><tr><th>Produit</th><th>Commandé</th><th>Déjà reçu</th><th>Réception actuelle</th></tr></thead><tbody>
+                <table><thead><tr><th>Produit</th><th>Commandé</th><th>Déjà reçu</th><th>Réception actuelle</th><th>Entrée stock</th></tr></thead><tbody>
                   {selected.items.filter(item=>item.remaining_quantity>0).map(item=><tr key={item.id}>
-                    <td>{item.product_name||item.description}</td><td>{item.quantity}</td><td>{item.received_quantity}</td>
-                    <td><input type="number" min="0" max={item.remaining_quantity} step="0.01" value={receiveQuantities[item.id]??''} onChange={e=>setReceiveQuantities(current=>({...current,[item.id]:e.target.value}))} aria-label={`Quantité reçue pour ${item.product_name||item.description}`} /></td>
+                    <td><strong>{item.product_name||item.description}</strong><small className="purchase-unit-hint">1 {item.purchase_unit || 'unité'} = {fmt(item.conversion_factor || 1, 2)} unité(s) stock</small></td><td>{fmt(item.quantity, 0)} {item.purchase_unit}</td><td>{fmt(item.received_quantity, 0)} {item.purchase_unit}</td>
+                    <td><input
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      max={item.remaining_quantity}
+                      step="1"
+                      value={receiveQuantities[item.id]??''}
+                      onKeyDown={e => {
+                        if (['.', ',', 'e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+                      }}
+                      onChange={e=>setReceiveQuantities(current=>({...current,[item.id]:Math.max(0, Math.trunc(Number(e.target.value)||0))}))}
+                      aria-label={`Quantité reçue pour ${item.product_name||item.description}`}
+                    /></td>
+                    <td><span className="purchase-stock-in">+{fmt(Number(receiveQuantities[item.id] || 0) * Number(item.conversion_factor || 1), 2)}</span></td>
                   </tr>)}
                 </tbody></table>
               </div>
             </div>
-            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-success" onClick={handleReceive}><Truck size={15}/> Enregistrer la réception</button></div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setModal(null)}>Annuler</button><button className="btn btn-success" onClick={handleReceive} disabled={receiving}>{receiving ? <span className="spinner" style={{width:15,height:15}}/> : <Truck size={15}/>} Enregistrer la réception</button></div>
           </div>
         </div>
       )}
@@ -501,17 +663,19 @@ function documentPrintCss() {
 
 function buildPurchaseDocumentHtml(purchase, settings) {
   const currency = settings.currency || 'MAD'
+  const vatEnabled = isVatEnabled(settings)
   const amountDue = Math.max(Number(purchase.total_amount || 0) - Number(purchase.paid_amount || 0), 0)
   const logoUrl = getLogoUrl(settings)
   const rows = (purchase.items || []).map(item => `
-    <tr><td>${escapeHtml(item.product_name || item.description)}</td><td>${fmt(item.quantity, 0)}</td><td>${fmt(item.unit_price)} ${currency}</td><td>${fmt(item.tax_rate)}%</td><td>${fmt(item.line_total)} ${currency}</td></tr>
+    <tr><td>${escapeHtml(item.product_name || item.description)}</td><td>${fmt(item.quantity, 0)}</td><td>${fmt(item.unit_price)} ${currency}</td>${vatEnabled ? `<td>${fmt(item.tax_rate)}%</td>` : ''}<td>${fmt(item.line_total)} ${currency}</td></tr>
   `).join('')
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(purchase.number)}</title><style>${documentPrintCss()}</style></head><body><main class="sheet"><header><div class="brand"><img src="${escapeHtml(logoUrl)}" alt=""><div><strong>${escapeHtml(getCompanyName(settings))}</strong><span>${escapeHtml(settings.address || '')}</span><span>${escapeHtml(settings.phone || '')}</span></div></div><div class="meta"><h1>Bon de commande</h1><b>${escapeHtml(purchase.number)}</b><span>Date: ${fmtDate(purchase.date_time)}</span><span>Utilisateur: ${escapeHtml(purchase.created_by_name || '-')}</span></div></header><section class="parties"><div><h2>Fournisseur</h2><b>${escapeHtml(purchase.supplier_name || 'Fournisseur')}</b></div><div><h2>Paiement</h2><span>Statut: ${escapeHtml(purchase.payment_status || '-')}</span><span>Paye: ${fmt(purchase.paid_amount)} ${currency}</span><span>Reste: ${fmt(amountDue)} ${currency}</span></div></section><table><thead><tr><th>Designation</th><th>Qte</th><th>PU HT</th><th>TVA</th><th>Total HT</th></tr></thead><tbody>${rows}</tbody></table><section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(purchase.notes || settings.purchase_terms || 'Bon de commande fournisseur.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(purchase.subtotal)} ${currency}</b></p><p><span>TVA</span><b>${fmt(purchase.tax_amount)} ${currency}</b></p><p class="total"><span>Total TTC</span><b>${fmt(purchase.total_amount)} ${currency}</b></p></aside></section><footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(purchase.created_by_name || 'Maktaba Print')}</footer></main></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(purchase.number)}</title><style>${documentPrintCss()}</style></head><body><main class="sheet"><header><div class="brand"><img src="${escapeHtml(logoUrl)}" alt=""><div><strong>${escapeHtml(getCompanyName(settings))}</strong><span>${escapeHtml(settings.address || '')}</span><span>${escapeHtml(settings.phone || '')}</span></div></div><div class="meta"><h1>Bon de commande</h1><b>${escapeHtml(purchase.number)}</b><span>Date: ${fmtDate(purchase.date_time)}</span><span>Utilisateur: ${escapeHtml(purchase.created_by_name || '-')}</span></div></header><section class="parties"><div><h2>Fournisseur</h2><b>${escapeHtml(purchase.supplier_name || 'Fournisseur')}</b></div><div><h2>Paiement</h2><span>Statut: ${escapeHtml(purchase.payment_status || '-')}</span><span>Paye: ${fmt(purchase.paid_amount)} ${currency}</span><span>Reste: ${fmt(amountDue)} ${currency}</span></div></section><table><thead><tr><th>Designation</th><th>Qte</th><th>PU</th>${vatEnabled ? '<th>TVA</th>' : ''}<th>Total</th></tr></thead><tbody>${rows}</tbody></table><section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(purchase.notes || settings.purchase_terms || 'Bon de commande fournisseur.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(purchase.subtotal)} ${currency}</b></p>${vatEnabled ? `<p><span>TVA</span><b>${fmt(purchase.tax_amount)} ${currency}</b></p>` : ''}<p class="total"><span>Total</span><b>${fmt(purchase.total_amount)} ${currency}</b></p></aside></section><footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(purchase.created_by_name || 'LIBRARY SABRI')}</footer></main></body></html>`
 }
 
 function PrintablePurchaseDocument({ purchase, settings }) {
   const currency = settings.currency || 'MAD'
+  const vatEnabled = isVatEnabled(settings)
   const supplierLabel = purchase.supplier_name && purchase.supplier_name !== 'â€”' ? purchase.supplier_name : 'Fournisseur'
   const amountDue = Math.max(Number(purchase.total_amount || 0) - Number(purchase.paid_amount || 0), 0)
   const logoUrl = getLogoUrl(settings)
@@ -563,9 +727,9 @@ function PrintablePurchaseDocument({ purchase, settings }) {
             <tr>
               <th>Designation</th>
               <th>Qte</th>
-              <th>PU HT</th>
-              <th>TVA</th>
-              <th>Total HT</th>
+              <th>PU</th>
+              {vatEnabled ? <th>TVA</th> : null}
+              <th>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -574,7 +738,7 @@ function PrintablePurchaseDocument({ purchase, settings }) {
                 <td>{item.product_name || item.description}</td>
                 <td>{fmt(item.quantity, 0)}</td>
                 <td>{fmt(item.unit_price)} {currency}</td>
-                <td>{fmt(item.tax_rate)}%</td>
+                {vatEnabled ? <td>{fmt(item.tax_rate)}%</td> : null}
                 <td>{fmt(item.line_total)} {currency}</td>
               </tr>
             ))}
@@ -588,13 +752,13 @@ function PrintablePurchaseDocument({ purchase, settings }) {
           </div>
           <div className="print-totals">
             <div><span>Sous-total HT</span><strong>{fmt(purchase.subtotal)} {currency}</strong></div>
-            <div><span>TVA</span><strong>{fmt(purchase.tax_amount)} {currency}</strong></div>
-            <div className="print-grand-total"><span>Total TTC</span><strong>{fmt(purchase.total_amount)} {currency}</strong></div>
+            {vatEnabled ? <div><span>TVA</span><strong>{fmt(purchase.tax_amount)} {currency}</strong></div> : null}
+            <div className="print-grand-total"><span>Total</span><strong>{fmt(purchase.total_amount)} {currency}</strong></div>
           </div>
         </section>
 
         <footer className="print-footer">
-          <span>{settings.name || 'Maktaba Print'} - Document généré par {purchase.created_by_name || 'Maktaba Print'} le {fmtDateTime(new Date())}</span>
+          <span>{settings.name || 'LIBRARY SABRI'} - Document généré par {purchase.created_by_name || 'LIBRARY SABRI'} le {fmtDateTime(new Date())}</span>
         </footer>
       </div>
     </div>

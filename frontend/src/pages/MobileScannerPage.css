@@ -1,0 +1,52 @@
+.mobile-scanner-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  color: #102947;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(31,111,235,.18), transparent 28%),
+    radial-gradient(circle at 92% 90%, rgba(245,158,11,.18), transparent 30%),
+    #f5f9ff;
+}
+.mobile-scanner-card {
+  width: min(100%, 470px);
+  padding: 1rem;
+  border: 1px solid #d8e4f2;
+  border-radius: 24px;
+  background: rgba(255,255,255,.96);
+  box-shadow: 0 24px 65px rgba(24,59,105,.16);
+}
+.mobile-scanner-card header { display:flex; align-items:center; gap:.7rem; margin-bottom:1rem; }
+.mobile-scanner-card header div { display:grid; flex:1; }
+.mobile-scanner-card header strong { color:#102b58; font-size:1rem; }
+.mobile-scanner-card header small { color:#6c819b; }
+.scanner-logo { width:46px; height:46px; display:grid; place-items:center; border-radius:14px; color:#fff; background:linear-gradient(135deg,#1877ef,#08a7cf); }
+.is-online { color:#18a45b; }
+.is-offline { color:#ef4444; }
+.scanner-status { min-height:48px; display:flex; align-items:center; gap:.65rem; padding:.7rem .85rem; margin-bottom:.85rem; border-radius:13px; background:#eef6ff; color:#28659f; font-size:.86rem; font-weight:650; }
+.scanner-status.is-success { background:#eafaf1; color:#16844a; }
+.scanner-status.is-error { background:#fff0f0; color:#c52e2e; }
+.scanner-status.is-warning { background:#fff7e4; color:#a76200; }
+.scanner-camera { position:relative; aspect-ratio:4/3; overflow:hidden; border-radius:18px; background:#0a1728; }
+.scanner-camera video { width:100%; height:100%; object-fit:cover; }
+.scanner-camera-empty { position:absolute; inset:0; display:grid; place-content:center; justify-items:center; gap:.5rem; color:#8fa9c5; }
+.scanner-frame { position:absolute; inset:19%; pointer-events:none; }
+.scanner-frame i { position:absolute; width:38px; height:38px; border-color:#35bcff; filter:drop-shadow(0 0 5px #168fe8); }
+.scanner-frame i:nth-child(1) { inset:0 auto auto 0; border-top:3px solid; border-left:3px solid; border-radius:10px 0 0; }
+.scanner-frame i:nth-child(2) { inset:0 0 auto auto; border-top:3px solid; border-right:3px solid; border-radius:0 10px 0 0; }
+.scanner-frame i:nth-child(3) { inset:auto auto 0 0; border-bottom:3px solid; border-left:3px solid; border-radius:0 0 0 10px; }
+.scanner-frame i:nth-child(4) { inset:auto 0 0 auto; border-bottom:3px solid; border-right:3px solid; border-radius:0 0 10px; }
+.scanner-camera.is-running::after { content:""; position:absolute; left:18%; right:18%; top:20%; height:2px; background:#38c7ff; box-shadow:0 0 12px #38c7ff; animation:mobileScanLine 2s ease-in-out infinite; }
+.scanner-last-code { position:absolute; left:50%; bottom:.7rem; transform:translateX(-50%); display:flex; align-items:center; gap:.4rem; max-width:90%; padding:.45rem .7rem; border-radius:999px; color:#fff; background:rgba(17,155,85,.9); font-size:.78rem; font-weight:800; }
+.scanner-main-action { width:100%; min-height:48px; margin-top:.75rem; display:flex; align-items:center; justify-content:center; gap:.55rem; border-radius:13px; font-weight:800; }
+.scanner-main-action { color:#fff; background:linear-gradient(135deg,#1877ef,#0b9fd1); box-shadow:0 10px 22px rgba(24,119,239,.22); }
+.scanner-divider { display:flex; align-items:center; gap:.6rem; margin:1rem 0 .7rem; color:#8597aa; font-size:.75rem; }
+.scanner-divider::before,.scanner-divider::after { content:""; height:1px; flex:1; background:#dce6f0; }
+.scanner-manual { display:flex; align-items:center; gap:.55rem; min-height:48px; padding-left:.8rem; border:1px solid #cedceb; border-radius:13px; overflow:hidden; }
+.scanner-manual input { flex:1; min-width:0; border:0; outline:0; background:transparent; font-size:1rem; }
+.scanner-manual button { align-self:stretch; width:48px; display:grid; place-items:center; color:#fff; background:#1674e8; }
+.scanner-manual button:disabled { opacity:.45; }
+.mobile-scanner-card footer { margin-top:.9rem; text-align:center; color:#8293a5; font-size:.75rem; }
+@keyframes mobileScanLine { 0%,100% { top:20%; opacity:.55; } 50% { top:78%; opacity:1; } }
+@media (prefers-reduced-motion:reduce) { .scanner-camera.is-running::after { animation:none; } }

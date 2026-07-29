@@ -18,7 +18,8 @@ from core.security import build_content_security_policy, require_permission, val
 from api.routes import (
     auth, clients, products, categories, suppliers,
     sales, purchases, expenses, stock, reports,
-    users, settings, cash, dashboard, backups, audit, notifications, search, payments, system, security_center
+    users, settings, cash, dashboard, backups, audit, notifications, search, payments, system, security_center,
+    mobile_scanner, printer
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -67,7 +68,8 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    camera_policy = "camera=(self)" if request.url.path.startswith("/mobile-scanner") else "camera=()"
+    response.headers.setdefault("Permissions-Policy", f"{camera_policy}, microphone=(), geolocation=()")
     response.headers.setdefault("Content-Security-Policy", build_content_security_policy(is_https=request.url.scheme == "https"))
     response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
@@ -97,6 +99,8 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["Not
 app.include_router(search.router,        prefix="/api/search",     tags=["Search"])
 app.include_router(payments.router,      prefix="/api/payments",   tags=["Payments"])
 app.include_router(system.router,        prefix="/api/system",     tags=["System"], dependencies=[Depends(require_permission("settings"))])
+app.include_router(mobile_scanner.router, prefix="/api/mobile-scanner", tags=["Mobile Scanner"])
+app.include_router(printer.router, prefix="/api/printer", tags=["Printer"], dependencies=[Depends(require_permission("expenses"))])
 
 # Serve uploaded images
 os.makedirs("uploads", exist_ok=True)

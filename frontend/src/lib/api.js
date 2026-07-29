@@ -31,6 +31,13 @@ export const PAYMENT_METHODS = [
 
 export const SETTLEMENT_METHODS = PAYMENT_METHODS.filter(method => method.value !== 'credit')
 
+export function isVatEnabled(settings = {}) {
+  const value = settings.tva_enabled
+  if (value == null) return true
+  if (typeof value === 'boolean') return value
+  return !['0', 'false', 'no', 'off', ''].includes(String(value).trim().toLowerCase())
+}
+
 export function paymentModeValue(value) {
   const aliases = {
     espece: 'cash',

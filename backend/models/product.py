@@ -1,5 +1,5 @@
 """models/product.py"""
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, Text, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, Text, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from core.database import Base
@@ -52,9 +52,13 @@ class Product(Base):
     barcode        = Column(String(100), default="")
     image_path     = Column(String(300))
     unit           = Column(String(20), default="pcs")
+    purchase_unit  = Column(String(20), default="pcs")
+    purchase_to_base_factor = Column(Numeric(18, 4), nullable=False, default=1)
+    allow_fractional_sale = Column(Boolean, nullable=False, default=False)
     tax_rate       = Column(Numeric(7, 4), default=20)
     tva_enabled    = Column(Integer, default=1)
     product_type   = Column(String(20), default="product")  # "product" | "service"
+    pricing_mode   = Column(String(20), default="fixed")    # fixed | editable | manual
     is_active      = Column(Integer, default=1)
     created_at     = Column(DateTime, default=datetime.utcnow)
     updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -64,6 +68,12 @@ class Product(Base):
     sale_items      = relationship("SaleItem", back_populates="product")
     purchase_items  = relationship("PurchaseItem", back_populates="product")
     stock_movements = relationship("StockMovement", back_populates="product")
+    bundle_components = relationship(
+        "ProductBundleComponent",
+        foreign_keys="ProductBundleComponent.bundle_product_id",
+        back_populates="bundle",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_low_stock(self):
@@ -78,3 +88,20 @@ class Product(Base):
         if self.purchase_price and self.purchase_price > 0:
             return ((self.sale_price - self.purchase_price) / self.purchase_price) * 100
         return 0.0
+
+
+class ProductBundleComponent(Base):
+    __tablename__ = "product_bundle_components"
+    __table_args__ = (
+        UniqueConstraint("bundle_product_id", "component_product_id", name="uq_bundle_component"),
+        Index("ix_bundle_component_product", "component_product_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    bundle_product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    component_product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity = Column(Numeric(18, 4), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    bundle = relationship("Product", foreign_keys=[bundle_product_id], back_populates="bundle_components")
+    component = relationship("Product", foreign_keys=[component_product_id])
