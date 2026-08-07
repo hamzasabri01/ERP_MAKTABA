@@ -10,6 +10,7 @@ import {
 } from 'recharts'
 import { api, fmt, fmtDate } from '../lib/api'
 import { useI18n } from '../lib/i18n'
+import toast from 'react-hot-toast'
 import './Dashboard.css'
 
 const CHART_COLORS = ['#4f8ef7', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
@@ -41,11 +42,13 @@ export default function Dashboard() {
         api.get('/dashboard/stock-alerts'),
         api.get('/reports/overview?period=monthly'),
       ])
-      setKpis(kpiRes.data)
-      setTop(topRes.data)
-      setRecent(recentRes.data)
-      setAlerts(alertsRes.data)
+      setKpis(kpiRes.data || {})
+      setTop(Array.isArray(topRes.data) ? topRes.data : [])
+      setRecent(Array.isArray(recentRes.data) ? recentRes.data : [])
+      setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : [])
       setComparisons(reportRes.data?.comparisons || {})
+    } catch {
+      toast.error(t('dashboard.loadError'))
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -55,7 +58,11 @@ export default function Dashboard() {
   useEffect(() => { loadOverview() }, [])
 
   useEffect(() => {
-    api.get(`/dashboard/revenue-chart?period=${period}`).then(r => setChart(r.data))
+    let active = true
+    api.get(`/dashboard/revenue-chart?period=${period}`)
+      .then(r => { if (active) setChart(Array.isArray(r.data) ? r.data : []) })
+      .catch(() => { if (active) setChart([]) })
+    return () => { active = false }
   }, [period])
 
   const K = kpis || {}
@@ -71,7 +78,7 @@ export default function Dashboard() {
   const quickStats = [
     { label: t('dashboard.netMargin'), value: `${formatNumber(health.profitRate, 1)}%`, tone: health.profitRate >= 0 ? 'good' : 'bad', icon: health.profitRate >= 0 ? TrendingUp : TrendingDown },
     { label: t('dashboard.collectionRate'), value: `${formatNumber(health.collectionRate, 1)}%`, tone: health.collectionRate >= 80 ? 'good' : 'warn', icon: Wallet },
-    { label: 'Caisse', value: K.cash_is_open ? formatMoney(K.cash_balance) : 'Fermée', tone: K.cash_is_open ? 'good' : 'warn', icon: Wallet },
+    { label: t('dashboard.cash'), value: K.cash_is_open ? formatMoney(K.cash_balance) : t('dashboard.cashClosed'), tone: K.cash_is_open ? 'good' : 'warn', icon: Wallet },
     { label: t('dashboard.stockAlerts'), value: K.low_stock_count || 0, tone: (K.low_stock_count || 0) > 0 ? 'warn' : 'good', icon: AlertCircle },
   ]
 
@@ -92,7 +99,7 @@ export default function Dashboard() {
           <span className="school-notebook" />
         </div>
         <div className="dashboard-hero-actions">
-          <Link className="btn btn-secondary" to="/reports">{t('nav.reports')} <ArrowRight size={16} /></Link>
+          <Link className="btn btn-secondary" to="/reports">{t('nav.reports')} <ArrowRight className="logical-arrow" size={16} /></Link>
           <button className="btn btn-primary" onClick={() => loadOverview(true)} disabled={refreshing}>
             <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} />
             {t('dashboard.refresh')}
@@ -119,11 +126,11 @@ export default function Dashboard() {
       <section className="dashboard-kpis">
         {loading ? Array.from({ length: 9 }).map((_, i) => <KpiSkeleton key={i} />) : (
           <>
-            <KpiCard color="blue" icon={TrendingUp} label={t('dashboard.thisMonthRevenue')} value={formatMoney(K.month_revenue)} sub={`${formatNumber(comparisons.month_vs_previous?.revenue || 0, 1)}% vs mois précédent`} link="/reports" />
-            <KpiCard color="green" icon={Wallet} label={t('dashboard.netProfit')} value={formatMoney(K.month_profit)} sub={`${formatNumber(comparisons.month_vs_previous?.net_profit || 0, 1)}% vs mois précédent`} trend={health.profitRate >= 0 ? 'up' : 'down'} t={t} link="/reports" />
+            <KpiCard color="blue" icon={TrendingUp} label={t('dashboard.thisMonthRevenue')} value={formatMoney(K.month_revenue)} sub={`${formatNumber(comparisons.month_vs_previous?.revenue || 0, 1)}% ${t('dashboard.previousMonthComparison')}`} link="/reports" />
+            <KpiCard color="green" icon={Wallet} label={t('dashboard.netProfit')} value={formatMoney(K.month_profit)} sub={`${formatNumber(comparisons.month_vs_previous?.net_profit || 0, 1)}% ${t('dashboard.previousMonthComparison')}`} trend={health.profitRate >= 0 ? 'up' : 'down'} t={t} link="/reports" />
             <KpiCard color="orange" icon={Clock} label={t('dashboard.unpaidInvoices')} value={K.pending_invoices || 0} sub={`${formatMoney(K.pending_amount)} ${t('dashboard.pending')}`} link="/sales" />
             <KpiCard color="red" icon={TrendingDown} label={t('dashboard.expenses')} value={formatMoney(K.month_expenses)} sub={t('dashboard.thisMonth')} link="/reports" />
-            <KpiCard color="green" icon={Wallet} label="Caisse" value={K.cash_is_open ? formatMoney(K.cash_balance) : 'Fermée'} sub={K.cash_is_open ? `Entrées ${formatMoney(K.cash_total_in)} - Sorties ${formatMoney(K.cash_total_out)}` : 'Aucune session ouverte'} link="/cash" />
+            <KpiCard color="green" icon={Wallet} label={t('dashboard.cash')} value={K.cash_is_open ? formatMoney(K.cash_balance) : t('dashboard.cashClosed')} sub={K.cash_is_open ? `${t('dashboard.cashEntries')} ${formatMoney(K.cash_total_in)} - ${t('dashboard.cashOutputs')} ${formatMoney(K.cash_total_out)}` : t('dashboard.noCashSession')} link="/cash" />
             <KpiCard color="purple" icon={Users} label={t('dashboard.activeClients')} value={K.total_clients || 0} sub={t('dashboard.total')} link="/clients" />
             <KpiCard color="orange" icon={AlertCircle} label={t('dashboard.lowStock')} value={K.low_stock_count || 0} sub={t('dashboard.productsToWatch')} link="/stock?low=1" />
             <KpiCard color="blue" icon={ShoppingCart} label={t('dashboard.monthInvoices')} value={K.month_invoice_count || 0} sub={t('dashboard.totalCount')} link="/sales" />
@@ -184,7 +191,7 @@ export default function Dashboard() {
 
       <section className="dashboard-bottom-grid">
         <div className="dashboard-panel recent-panel">
-          <PanelHeader title={t('dashboard.recentSales')} action={<Link to="/sales">{t('dashboard.seeAll')} <ArrowRight size={14} /></Link>} />
+          <PanelHeader title={t('dashboard.recentSales')} action={<Link to="/sales">{t('dashboard.seeAll')} <ArrowRight className="logical-arrow" size={14} /></Link>} />
           <div className="table-wrap">
             <table>
               <thead><tr><th>{t('dashboard.number')}</th><th>{t('dashboard.client')}</th><th>{t('dashboard.date')}</th><th>{t('dashboard.amount')}</th><th>{t('dashboard.status')}</th></tr></thead>

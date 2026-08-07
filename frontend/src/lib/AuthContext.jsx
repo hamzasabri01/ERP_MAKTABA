@@ -112,6 +112,8 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     try {
       await api.post('/auth/logout', null, { headers: csrfHeaders(), skipAuthRefresh: true })
+    } catch {
+      // Local logout must remain available when the backend is offline.
     } finally {
       clearSession(false)
     }

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../lib/AuthContext'
 import { useTheme } from '../lib/ThemeContext'
+import { storageGet, storageRemove, storageSet } from '../lib/safeStorage'
 import './LoginPage.css'
 
 const REMEMBERED_USER_KEY = 'library-sabri-login-user'
@@ -25,7 +26,7 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [showPassword, setShowPassword] = useState(false)
-  const rememberedUsername = localStorage.getItem(REMEMBERED_USER_KEY) || ''
+  const rememberedUsername = storageGet(REMEMBERED_USER_KEY)
   const [form, setForm] = useState({ username: rememberedUsername, password: '' })
   const [rememberUsername, setRememberUsername] = useState(Boolean(rememberedUsername))
   const [capsLock, setCapsLock] = useState(false)
@@ -47,8 +48,8 @@ export default function LoginPage() {
       toast.success('Code MFA requis')
       return
     }
-    if (rememberUsername) localStorage.setItem(REMEMBERED_USER_KEY, form.username.trim())
-    else localStorage.removeItem(REMEMBERED_USER_KEY)
+    if (rememberUsername) storageSet(REMEMBERED_USER_KEY, form.username.trim())
+    else storageRemove(REMEMBERED_USER_KEY)
     setLoginState('success')
     toast.success('Connexion reussie')
     await new Promise(resolve => setTimeout(resolve, 320))
@@ -64,8 +65,8 @@ export default function LoginPage() {
     try {
       if (mfaToken) {
         await completeMfaLogin(mfaToken, otp.trim())
-        if (rememberUsername) localStorage.setItem(REMEMBERED_USER_KEY, form.username.trim())
-        else localStorage.removeItem(REMEMBERED_USER_KEY)
+        if (rememberUsername) storageSet(REMEMBERED_USER_KEY, form.username.trim())
+        else storageRemove(REMEMBERED_USER_KEY)
         setLoginState('success')
         toast.success('Connexion MFA reussie')
         await new Promise(resolve => setTimeout(resolve, 320))

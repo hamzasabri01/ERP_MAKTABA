@@ -1,9 +1,20 @@
-# Installs a per-user Windows startup shortcut for Library Sabri.
-# No administrator privileges are required.
+# Installs the single elevated watchdog used by Library Sabri.
+param([switch]$Elevated)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $StartScript = Join-Path $ScriptDir "startup-launch.ps1"
+
+$IsAdministrator = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+if (-not $IsAdministrator) {
+    if ($Elevated) { throw "Administrator rights are required to install the startup watchdog." }
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Elevated"
+    $process = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Automatic startup installation was cancelled." }
+    exit
+}
 
 if (-not (Test-Path $StartScript)) {
     throw "start.ps1 introuvable dans $ScriptDir"
@@ -40,14 +51,10 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartCount 999 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero)
-$IsAdministrator = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator
-)
-$RunLevel = if ($IsAdministrator) { "Highest" } else { "Limited" }
 $Principal = New-ScheduledTaskPrincipal `
     -UserId $CurrentUser `
     -LogonType Interactive `
-    -RunLevel $RunLevel
+    -RunLevel Highest
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 Register-ScheduledTask `

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -118,6 +119,26 @@ class FinancialDocumentIntegrationTests(unittest.TestCase):
         self._expect_http(409, lambda: sales.delete_sale(sale.id, "5", self.db, self.user))
         self._expect_http(400, lambda: sales.update_sale(sale.id, SaleCreate(items=[]), "5", self.db, self.user))
 
+    def test_zero_total_document_cannot_be_confirmed(self):
+        sale = Sale(
+            number="S-ZERO", doc_type="invoice", status="draft",
+            total_amount=0, paid_amount=0, version=1, created_by=self.user.id,
+        )
+        self.db.add(sale)
+        self.db.flush()
+        self.db.add(SaleItem(
+            sale_id=sale.id, product_id=self.product.id, quantity=1,
+            unit_price=0, line_total=0, total_amount=0,
+        ))
+        self.db.commit()
+
+        self._expect_http(
+            400,
+            lambda: sales.confirm_sale(sale.id, "confirm-zero", "1", self.db, self.user),
+        )
+        self.assertEqual("draft", self.db.get(Sale, sale.id).status)
+        self.assertEqual(100, self.db.get(Product, self.product.id).stock_quantity)
+
     def test_sale_cancellation_reverses_stock_and_detailed_payment_once(self):
         sale = self._sale("S-2")
         start = self.db.get(Product, self.product.id).stock_quantity
@@ -132,6 +153,37 @@ class FinancialDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual(1, self.db.query(Payment).filter(Payment.document_id == sale.id, Payment.kind == "reversal").count())
         self._expect_http(409, lambda: sales.record_payment(sale.id, PaymentIn(amount="1", payment_mode="Carte"), "pay-cancelled", "4", self.db, self.user))
         self._expect_http(409, lambda: sales.delete_sale(sale.id, "4", self.db, self.user))
+
+    def test_quote_conversion_is_single_and_replay_returns_existing_invoice(self):
+        quote = Sale(
+            number="DEV-1", doc_type="quote", status="confirmed", total_amount=40,
+            paid_amount=0, version=1, created_by=self.user.id,
+        )
+        self.db.add(quote)
+        self.db.flush()
+        self.db.add(SaleItem(
+            sale_id=quote.id, product_id=self.product.id, description=self.product.name,
+            quantity=2, unit_price=20, catalog_unit_price=20, purchase_price=10,
+            line_total=40, total_amount=40,
+        ))
+        self.db.commit()
+
+        allocation = SimpleNamespace(document_number="FAC-1", allocation_id=1)
+        with patch.object(sales, "reserve_document_number", return_value=allocation), \
+             patch.object(sales, "commit_number_allocation"), \
+             patch.object(sales, "void_reserved_allocation"):
+            first = sales.convert_quote_to_invoice(
+                quote.id, "convert-dev-1", "1", self.db, self.user,
+            )
+            replay = sales.convert_quote_to_invoice(
+                quote.id, "convert-dev-1-retry", "1", self.db, self.user,
+            )
+
+        self.assertEqual(first.id, replay.id)
+        self.assertEqual(1, self.db.query(Sale).filter(
+            Sale.parent_id == quote.id,
+            Sale.doc_type == "invoice",
+        ).count())
 
     def test_purchase_full_state_machine_partial_receipt_and_payment_guards(self):
         purchase = self._purchase("P-1")

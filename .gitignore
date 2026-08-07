@@ -41,6 +41,8 @@ backend/backups/
 backups/
 uploads/
 backend/uploads/
+backend/data/
+backend/company_settings.json
 
 # Local project material and generated runtime artifacts
 PFE/

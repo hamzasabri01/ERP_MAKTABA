@@ -472,7 +472,13 @@ def create_sale_return(
 
 
 @router.post("/{sid}/convert-to-invoice", response_model=SaleOut, status_code=201)
-def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+def convert_quote_to_invoice(
+    sid: int,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
     source = (
         db.query(Sale)
         .options(selectinload(Sale.items).joinedload(SaleItem.product))
@@ -487,6 +493,13 @@ def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depen
         raise HTTPException(400, "Impossible de convertir un devis annule")
     if not source.items:
         raise HTTPException(400, "Le devis doit contenir au moins une ligne")
+    existing_invoice = db.query(Sale).filter(
+        Sale.parent_id == source.id,
+        Sale.doc_type == "invoice",
+        Sale.status != SALE_CANCELLED,
+    ).order_by(Sale.id).first()
+    if existing_invoice:
+        return get_sale(existing_invoice.id, db, user)
 
     for item in source.items:
         if item.product_id and item.product and item.product.product_type == "product":
@@ -512,6 +525,23 @@ def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depen
         )
         if not source or source.doc_type != "quote" or source.status == "cancelled":
             raise HTTPException(409, "Le devis a change avant sa conversion")
+        existing_invoice = db.query(Sale).filter(
+            Sale.parent_id == source.id,
+            Sale.doc_type == "invoice",
+            Sale.status != SALE_CANCELLED,
+        ).order_by(Sale.id).first()
+        if existing_invoice:
+            db.rollback()
+            void_reserved_allocation(db, allocation.allocation_id, "quote_already_converted")
+            return get_sale(existing_invoice.id, db, user)
+        claim_idempotency(
+            db,
+            scope=f"sale:{sid}:convert-to-invoice",
+            key=idempotency_key,
+            payload={"source_id": sid},
+            user_id=user.id,
+        )
+        source.version = claim_version(db, Sale, source.id, if_match)
         due_date = None
         if source.client_id:
             client = db.query(Client).filter(Client.id == source.client_id).first()
@@ -577,6 +607,11 @@ def convert_quote_to_invoice(sid: int, db: Session = Depends(get_db), user=Depen
 def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     if money(body.paid_amount) != 0:
         raise HTTPException(400, "Un brouillon ne peut pas contenir de paiement; confirmez puis encaissez")
+    if body.client_id and not db.query(Client.id).filter(
+        Client.id == body.client_id,
+        Client.is_active.is_(True),
+    ).first():
+        raise HTTPException(400, "Le client sélectionné est introuvable ou archivé")
     items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
     document_date = body.date_time or datetime.now()
@@ -665,6 +700,11 @@ def update_sale(
         raise HTTPException(400, "Seuls les brouillons peuvent être modifiés")
     if money(body.paid_amount) != 0:
         raise HTTPException(400, "Un brouillon ne peut pas contenir de paiement")
+    if body.client_id and not db.query(Client.id).filter(
+        Client.id == body.client_id,
+        Client.is_active.is_(True),
+    ).first():
+        raise HTTPException(400, "Le client sélectionné est introuvable ou archivé")
     s.version = claim_version(db, Sale, s.id, if_match)
     items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
@@ -727,6 +767,8 @@ def confirm_sale(
     assert_transition("sale", s.status, SALE_CONFIRMED)
     if not s.items:
         raise HTTPException(400, "La vente doit contenir au moins une ligne")
+    if money(s.total_amount) <= 0:
+        raise HTTPException(400, "Le total du document doit être strictement positif")
 
     if s.doc_type == "invoice" and s.client_id and s.balance_due > 0:
         client = db.query(Client).filter(Client.id == s.client_id).first()

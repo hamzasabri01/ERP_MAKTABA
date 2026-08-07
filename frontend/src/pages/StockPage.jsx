@@ -1,5 +1,6 @@
 // src/pages/StockPage.jsx
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, fmt, fmtDateTime, idempotencyHeaders, operationHeaders } from '../lib/api'
 import QRCode from 'qrcode'
 import {
@@ -22,14 +23,23 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TableLoadingRow } from '../components/ui/LoadingStates'
+import { useI18n } from '../lib/i18n'
 import './StockPage.css'
 
 const EMPTY_ADJUST = { product_id: '', quantity: 0, movement_type: 'adjustment', notes: '', unit_cost: 0, reference: 'MANUAL' }
 const INVENTORY_LIMIT = 250
-const MOVEMENT_LABELS = { in: 'Entrée', out: 'Sortie', adjustment: 'Ajustement', inventory: 'Inventaire' }
 const MOVEMENT_COLORS = { in: 'success', out: 'danger', adjustment: 'accent', inventory: 'warning' }
 
 export default function StockPage() {
+  const { language, t } = useI18n()
+  const movementLabels = useMemo(() => ({
+    in: t('stock.movementIn'),
+    out: t('stock.movementOut'),
+    adjustment: t('stock.movementAdjustment'),
+    inventory: t('stock.inventory'),
+  }), [t])
+  const unitLabel = useCallback(unit => (language === 'ar' && unit === 'pcs' ? 'قطعة' : unit), [language])
+  const [searchParams] = useSearchParams()
   const [movements, setMovements] = useState([])
   const [products, setProducts] = useState([])
   const [summary, setSummary] = useState(null)
@@ -39,10 +49,13 @@ export default function StockPage() {
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(EMPTY_ADJUST)
   const [saving, setSaving] = useState(false)
-  const [stockFilter, setStockFilter] = useState('all')
+  const [stockFilter, setStockFilter] = useState(() => {
+    const requested = searchParams.get('status')
+    return ['out', 'low', 'healthy'].includes(requested) ? requested : 'all'
+  })
   const [query, setQuery] = useState('')
   const [movementType, setMovementType] = useState('')
-  const [selectedProductId, setSelectedProductId] = useState('')
+  const [selectedProductId, setSelectedProductId] = useState(() => searchParams.get('product') || '')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [inventoryOpen, setInventoryOpen] = useState(false)
   const [inventoryRows, setInventoryRows] = useState([])
@@ -57,6 +70,14 @@ export default function StockPage() {
   const [inventoryScannerOpen, setInventoryScannerOpen] = useState(false)
   const inventoryScannerCursor = useRef(0)
   const inventoryScannedProducts = useRef(new Set())
+
+  useEffect(() => {
+    const status = searchParams.get('status')
+    const product = searchParams.get('product')
+    if (['out', 'low', 'healthy'].includes(status)) setStockFilter(status)
+    else if (!status) setStockFilter('all')
+    setSelectedProductId(product || '')
+  }, [searchParams])
 
   const load = useCallback(async (soft = false) => {
     if (soft) setRefreshing(true)
@@ -345,54 +366,54 @@ export default function StockPage() {
     <div className="page-content stock-page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Gestion du stock</h1>
+          <h1 className="page-title">{t('stock.title')}</h1>
           <p className="stock-runtime-text">
-            Runtime {summary?.runtime_at ? fmtDateTime(summary.runtime_at) : '...'}
-            {refreshing ? <span>Synchronisation...</span> : null}
+            {t('stock.runtime')} {summary?.runtime_at ? fmtDateTime(summary.runtime_at) : '...'}
+            {refreshing ? <span>{t('stock.syncing')}</span> : null}
           </p>
         </div>
         <div className="toolbar">
           <button className={`btn btn-secondary ${autoRefresh ? 'stock-live' : ''}`} onClick={() => setAutoRefresh(value => !value)}>
-            <Activity size={16} /> Live
+            <Activity size={16} /> {t('stock.live')}
           </button>
           <button className="btn btn-secondary" onClick={() => load(true)} disabled={refreshing}>
-            <RefreshCw size={16} className={refreshing ? 'stock-spin' : ''} /> Actualiser
+            <RefreshCw size={16} className={refreshing ? 'stock-spin' : ''} /> {t('stock.refresh')}
           </button>
           <button className="btn btn-secondary" onClick={openInventory} disabled={loading || products.length === 0}>
-            {inventorySaving && !inventoryOpen ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <ClipboardList size={16} />} Inventaire
+            {inventorySaving && !inventoryOpen ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <ClipboardList size={16} />} {t('stock.inventory')}
           </button>
           <button className="btn btn-secondary" onClick={openReorderSuggestions}>
-            <ShoppingCart size={16} /> Réapprovisionnement
+            <ShoppingCart size={16} /> {t('stock.reorder')}
           </button>
-          <button className="btn btn-primary" onClick={() => openAdjust()}><Plus size={16} /> Mouvement stock</button>
+          <button className="btn btn-primary" onClick={() => openAdjust()}><Plus size={16} /> {t('stock.newMovement')}</button>
         </div>
       </div>
 
       <div className={`stock-reconciliation ${reconciliation?.ok ? 'is-ok' : 'has-errors'}`}>
         <ShieldCheck size={19} />
         <div>
-          <strong>{reconciliation?.ok ? 'Stock réconcilié' : 'Écart de réconciliation détecté'}</strong>
+          <strong>{reconciliation?.ok ? t('stock.reconciled') : t('stock.reconciliationMismatch')}</strong>
           <span>
             {reconciliation
-              ? `${reconciliation.checked_products} produit(s), ${reconciliation.movement_count} mouvement(s), ${reconciliation.mismatch_count} écart(s)`
-              : 'Vérification en cours...'}
+              ? t('stock.reconciliationSummary', { products: reconciliation.checked_products, movements: reconciliation.movement_count, mismatches: reconciliation.mismatch_count })
+              : t('stock.verifying')}
           </span>
         </div>
-        <span className="stock-warehouse">Entrepôt {reconciliation?.warehouse_code || 'MAIN'}</span>
+        <span className="stock-warehouse">{t('stock.warehouse')} {reconciliation?.warehouse_code || 'MAIN'}</span>
       </div>
 
       <div className="stock-kpis">
-        <div className="kpi-card blue"><div className="kpi-icon blue"><Boxes size={20} /></div><div className="kpi-value">{summary?.products_count || 0}</div><div className="kpi-label">Produits suivis</div></div>
-        <div className="kpi-card green"><div className="kpi-icon green"><PackageCheck size={20} /></div><div className="kpi-value">{fmt(summary?.stock_value || 0)}</div><div className="kpi-label">Valeur stock MAD</div></div>
-        <div className="kpi-card orange"><div className="kpi-icon orange"><AlertTriangle size={20} /></div><div className="kpi-value">{summary?.low_stock_count || 0}</div><div className="kpi-label">Stock faible</div></div>
-        <div className="kpi-card red"><div className="kpi-icon red"><Archive size={20} /></div><div className="kpi-value">{summary?.out_of_stock_count || 0}</div><div className="kpi-label">Rupture stock</div></div>
+        <div className="kpi-card blue"><div className="kpi-icon blue"><Boxes size={20} /></div><div className="kpi-value">{summary?.products_count || 0}</div><div className="kpi-label">{t('stock.trackedProducts')}</div></div>
+        <div className="kpi-card green"><div className="kpi-icon green"><PackageCheck size={20} /></div><div className="kpi-value">{fmt(summary?.stock_value || 0)}</div><div className="kpi-label">{t('stock.stockValue')}</div></div>
+        <div className="kpi-card orange"><div className="kpi-icon orange"><AlertTriangle size={20} /></div><div className="kpi-value">{summary?.low_stock_count || 0}</div><div className="kpi-label">{t('stock.lowStock')}</div></div>
+        <div className="kpi-card red"><div className="kpi-icon red"><Archive size={20} /></div><div className="kpi-value">{summary?.out_of_stock_count || 0}</div><div className="kpi-label">{t('stock.outOfStock')}</div></div>
       </div>
 
       {(lowStock.length > 0 || outOfStock.length > 0) && (
         <div className="alert alert-warning">
           <AlertTriangle size={18} />
           <div>
-            <strong>{lowStock.length} stock faible, {outOfStock.length} rupture.</strong>
+            <strong>{t('stock.alertSummary', { low: lowStock.length, out: outOfStock.length })}</strong>
             {' '}
             {lowStock.slice(0, 5).map(product => product.name).join(', ')}
             {lowStock.length > 5 ? '...' : ''}
@@ -403,37 +424,37 @@ export default function StockPage() {
       <div className="stock-filters">
         <div className="search-wrap">
           <Search size={15} className="search-icon" />
-          <input placeholder="Rechercher produit, code, code-barres..." value={query} onChange={e => setQuery(e.target.value)} />
+          <input placeholder={t('stock.searchPlaceholder')} value={query} onChange={e => setQuery(e.target.value)} />
         </div>
         <div className="stock-status-tabs" aria-label="Filtrer les niveaux de stock">
           {[
-            ['all', 'Tous'],
-            ['healthy', 'Disponible'],
-            ['low', 'Faible'],
-            ['out', 'Rupture'],
+            ['all', t('stock.all')],
+            ['healthy', t('stock.available')],
+            ['low', t('stock.low')],
+            ['out', t('stock.out')],
           ].map(([value, label]) => (
             <button key={value} className={stockFilter === value ? 'active' : ''} onClick={() => setStockFilter(value)}>{label}</button>
           ))}
         </div>
         <select value={selectedProductId} onChange={e => setSelectedProductId(e.target.value)}>
-          <option value="">Tous les mouvements</option>
+          <option value="">{t('stock.allMovements')}</option>
           {products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}
         </select>
         <select value={movementType} onChange={e => setMovementType(e.target.value)}>
-          <option value="">Tous types</option>
-          {Object.entries(MOVEMENT_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          <option value="">{t('stock.allTypes')}</option>
+          {Object.entries(movementLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
       </div>
 
       <div className="stock-grid">
         <section className="card stock-panel">
           <div className="stock-panel-head">
-            <div><Boxes size={17} /> Niveaux de stock</div>
-            <span>{filteredProducts.length} produit(s)</span>
+            <div><Boxes size={17} /> {t('stock.levels')}</div>
+            <span>{t('stock.productsCount', { count: filteredProducts.length })}</span>
           </div>
           <div className="table-wrap stock-table-scroll">
             <table>
-              <thead><tr><th>Produit</th><th>Stock</th><th>Min</th><th>Valeur</th><th></th></tr></thead>
+              <thead><tr><th>{t('stock.product')}</th><th>{t('stock.stock')}</th><th>{t('stock.minimum')}</th><th>{t('stock.value')}</th><th></th></tr></thead>
               <tbody>
                 {loading ? (
                   <TableLoadingRow colSpan={5} label="Synchronisation stock runtime..." />
@@ -450,11 +471,11 @@ export default function StockPage() {
                         <strong className={Number(product.stock_quantity || 0) <= 0 ? 'text-danger' : product.is_low_stock ? 'text-warning' : 'text-success'}>
                           {fmt(product.stock_quantity, 2)}
                         </strong>
-                        <span>{product.unit}</span>
+                        <span>{unitLabel(product.unit)}</span>
                       </div>
-                      {product.is_low_stock && <span className="badge badge-warning">Faible</span>}
+                      {product.is_low_stock && <span className="badge badge-warning">{t('stock.low')}</span>}
                     </td>
-                    <td className="text-muted text-sm">{fmt(product.min_stock, 2)} {product.unit}</td>
+                    <td className="text-muted text-sm">{fmt(product.min_stock, 2)} {unitLabel(product.unit)}</td>
                     <td>{fmt(product.stock_value)} MAD</td>
                     <td>
                       <div className="flex gap-2">
@@ -471,12 +492,12 @@ export default function StockPage() {
 
         <section className="card stock-panel">
           <div className="stock-panel-head">
-            <div><Clock3 size={17} /> Derniers mouvements</div>
-            <span>{summary?.movements_today || 0} aujourd'hui</span>
+            <div><Clock3 size={17} /> {t('stock.latestMovements')}</div>
+            <span>{t('stock.todayCount', { count: summary?.movements_today || 0 })}</span>
           </div>
           <div className="table-wrap stock-table-scroll">
             <table>
-              <thead><tr><th>Produit</th><th>Type</th><th>Qté</th><th>Avant</th><th>Après</th><th>Utilisateur</th><th>Date</th></tr></thead>
+              <thead><tr><th>{t('stock.product')}</th><th>{t('stock.type')}</th><th>{t('stock.quantity')}</th><th>{t('stock.before')}</th><th>{t('stock.after')}</th><th>{t('stock.user')}</th><th>{t('stock.date')}</th></tr></thead>
               <tbody>
                 {loading ? (
                   <TableLoadingRow colSpan={7} label="Chargement mouvements..." />
@@ -491,7 +512,7 @@ export default function StockPage() {
                         <strong className="text-sm">{movement.product_name}</strong>
                         {movement.reference && <div className="text-muted text-sm">{movement.reference}</div>}
                       </td>
-                      <td><span className={`stock-movement-badge ${color}`}>{MOVEMENT_LABELS[movement.movement_type] || movement.movement_type}</span></td>
+                      <td><span className={`stock-movement-badge ${color}`}>{movementLabels[movement.movement_type] || movement.movement_type}</span></td>
                       <td className={movement.movement_type === 'out' ? 'text-danger font-semibold' : 'text-success font-semibold'}>{sign}{fmt(movement.quantity, 2)}</td>
                       <td className="text-muted">{fmt(movement.before_qty, 2)}</td>
                       <td>{fmt(movement.after_qty, 2)}</td>

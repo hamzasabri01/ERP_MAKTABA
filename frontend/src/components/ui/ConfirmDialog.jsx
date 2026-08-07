@@ -30,19 +30,19 @@ export function ConfirmProvider({ children }) {
     <ConfirmContext.Provider value={value}>
       {children}
       {request && (
-        <div className="modal-overlay" onClick={event => event.target === event.currentTarget && close(false)}>
-          <div className={`modal confirm-pro ${request.tone || 'warning'}`} role="dialog" aria-modal="true">
+        <div className="modal-overlay confirm-pro-overlay" onClick={event => event.target === event.currentTarget && close(false)}>
+          <div className={`modal confirm-pro ${request.tone || 'warning'}`} role="alertdialog" aria-modal="true" aria-labelledby="confirm-pro-title" aria-describedby="confirm-pro-message">
             <div className="confirm-pro-icon"><Icon size={22} /></div>
             <button className="confirm-pro-close" onClick={() => close(false)} aria-label="Fermer">
               <X size={16} />
             </button>
             <div className="modal-body">
-              <h2>{request.title}</h2>
-              <p>{request.message}</p>
+              <h2 id="confirm-pro-title">{request.title}</h2>
+              <p id="confirm-pro-message">{request.message}</p>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => close(false)}>{request.cancelText}</button>
-              <button className={`btn ${request.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`} onClick={() => close(true)}>
+              <button className="btn btn-secondary" onClick={() => close(false)} autoFocus>{request.cancelText}</button>
+              <button className={`btn ${request.tone === 'danger' ? 'btn-danger' : request.tone === 'warning' ? 'confirm-warning-action' : 'btn-primary'}`} onClick={() => close(true)}>
                 {request.confirmText}
               </button>
             </div>

@@ -80,6 +80,23 @@
 .risk-card.risk-medium { border-left-color: var(--warning); }
 .risk-card.risk-high { border-left-color: var(--danger); }
 
+[dir="rtl"] .risk-card {
+  border-left-width: 1px;
+  border-right: 4px solid var(--success);
+}
+[dir="rtl"] .risk-card.risk-medium { border-right-color: var(--warning); }
+[dir="rtl"] .risk-card.risk-high { border-right-color: var(--danger); }
+[dir="rtl"] .security-metric::before {
+  left: auto;
+  right: 0;
+}
+[dir="rtl"] .security-hero,
+[dir="rtl"] .security-panel,
+[dir="rtl"] .security-metric,
+[dir="rtl"] .risk-card {
+  text-align: right;
+}
+
 .risk-ring {
   width: 82px;
   height: 82px;

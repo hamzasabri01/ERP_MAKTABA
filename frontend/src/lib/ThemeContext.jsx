@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { storageGet, storageSet } from './safeStorage'
 
 const ThemeCtx = createContext(null)
 const STORAGE_KEY = 'library-sabri-theme-v2'
 
 function getInitialTheme() {
-  const saved = localStorage.getItem(STORAGE_KEY)
+  const saved = storageGet(STORAGE_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   return 'light'
 }
@@ -14,7 +15,7 @@ export function ThemeProvider({ children }) {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    localStorage.setItem(STORAGE_KEY, theme)
+    storageSet(STORAGE_KEY, theme)
   }, [theme])
 
   const value = useMemo(() => ({

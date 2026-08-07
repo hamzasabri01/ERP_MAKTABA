@@ -516,3 +516,34 @@
   .bundle-component-row,
   .catalog-row { animation: none; }
 }
+.products-page [aria-invalid="true"] {
+  border-color: var(--danger) !important;
+  background: color-mix(in srgb, var(--danger) 4%, var(--bg2)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 11%, transparent) !important;
+}
+
+.product-field-error {
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  margin-top: .32rem;
+  color: var(--danger);
+  font-size: .72rem;
+  font-weight: 700;
+  line-height: 1.35;
+  animation: productFieldErrorIn 180ms ease both;
+}
+
+.product-field-error::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+@keyframes productFieldErrorIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}

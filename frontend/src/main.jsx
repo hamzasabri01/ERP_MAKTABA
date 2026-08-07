@@ -5,10 +5,15 @@ import { applyApiBaseUrl } from './lib/api'
 import { loadRuntimeConfig } from './lib/runtimeConfig'
 import './index.css'
 
-loadRuntimeConfig().then(config => {
-  applyApiBaseUrl(config.api_base_url)
+loadRuntimeConfig().catch(error => {
+  console.warn('Runtime configuration unavailable; using local defaults.', error)
+  return { api_base_url: '/api' }
+}).then(config => {
+  applyApiBaseUrl(config?.api_base_url || '/api')
 
-  ReactDOM.createRoot(document.getElementById('root')).render(
+  const root = document.getElementById('root')
+  if (!root) throw new Error('Application root element is missing')
+  ReactDOM.createRoot(root).render(
     <React.StrictMode>
       <App />
     </React.StrictMode>,

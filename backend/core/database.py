@@ -67,6 +67,9 @@ def init_db():
         OperationKey,
         DocumentSequence, DocumentNumberAllocation,
         PrintJob, PrinterCounter,
+        ResearchRequest, ResearchOutline, ResearchSection, ResearchSectionVersion,
+        ResearchSource, ResearchAsset, ResearchOutput, ResearchStatusHistory,
+        ResearchAIUsage, ResearchSetting,
     )
     Base.metadata.create_all(bind=engine)
     _migrate_schema()

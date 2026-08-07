@@ -12,3 +12,8 @@ from models.auth_security import AuthRateLimitAttempt
 from models.workflow import OperationKey
 from models.document_sequence import DocumentNumberAllocation, DocumentSequence
 from models.printer import PrintJob, PrinterCounter
+from models.research import (
+    ResearchRequest, ResearchOutline, ResearchSection, ResearchSectionVersion,
+    ResearchSource, ResearchAsset, ResearchOutput, ResearchStatusHistory,
+    ResearchAIUsage, ResearchSetting,
+)

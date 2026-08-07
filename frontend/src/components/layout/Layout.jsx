@@ -1,5 +1,5 @@
 // src/components/layout/Layout.jsx
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/AuthContext'
 import { useTheme } from '../../lib/ThemeContext'
@@ -7,13 +7,16 @@ import { api } from '../../lib/api'
 import { getLogoUrl } from '../../lib/brand'
 import { applyVisualIdentity } from '../../lib/visualIdentity'
 import { useI18n } from '../../lib/i18n'
+import { storageJson, storageSet } from '../../lib/safeStorage'
 import CommandPalette from './CommandPalette'
+import { useConfirm } from '../ui/ConfirmDialog'
 import toast from 'react-hot-toast'
 import {
   LayoutDashboard, Users, Package, ShoppingCart, Truck,
   TrendingDown, BarChart2, Settings, LogOut, ChevronDown,
   Wallet, UserCheck, Menu, X, Archive, ScanLine, UserCog, LogIn,
-  Sun, Moon, Bell, Search, ShieldCheck, Printer
+  Sun, Moon, Bell, Search, ShieldCheck, Printer, ScanText, PanelLeftClose, PanelLeftOpen
+  , CheckCheck, RefreshCw, AlertTriangle, PackageX, GraduationCap
 } from 'lucide-react'
 import './Layout.css'
 
@@ -28,6 +31,8 @@ export const NAV_ITEMS = [
   { path: '/stock',      icon: Archive,         labelKey: 'nav.stock',     group: 'stock',    permission: 'stock' },
   { path: '/expenses',   icon: TrendingDown,    labelKey: 'nav.expenses',  group: 'finance',  permission: 'expenses' },
   { path: '/printer',    icon: Printer,         labelKey: 'nav.printer',   group: 'finance',  permission: 'expenses' },
+  { path: '/document-scanner', icon: ScanText,   labelKey: 'nav.documentScanner', group: 'finance', permission: 'expenses' },
+  { path: '/research',   icon: GraduationCap,    labelKey: 'nav.research', group: 'finance', permission: 'research.view', feature: 'research' },
   { path: '/cash',       icon: Wallet,          labelKey: 'nav.cash',      group: 'finance',  permission: 'cash' },
   { path: '/reports',    icon: BarChart2,       labelKey: 'nav.reports',   group: 'finance',  permission: 'reports' },
   { path: '/security',   icon: ShieldCheck,     labelKey: 'nav.security',  group: 'admin',    permission: 'settings' },
@@ -116,6 +121,7 @@ export default function Layout() {
   const { user, logout, hasPermission, displayName, updateProfile, changePassword, setupMfa, enableMfa, disableMfa, regenerateRecoveryCodes } = useAuth()
   const { theme, toggleTheme } = useTheme()
   const { t, language } = useI18n()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -133,21 +139,163 @@ export default function Layout() {
   const [savingProfile, setSavingProfile] = useState(false)
   const [visualSettings, setVisualSettings] = useState({})
   const [notifications, setNotifications] = useState([])
+  const [notificationMeta, setNotificationMeta] = useState({})
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [readNotificationKeys, setReadNotificationKeys] = useState(() => {
+    try {
+      const saved = storageJson('library-sabri:read-notifications', [])
+      return Array.isArray(saved) ? saved : []
+    }
+    catch { return [] }
+  })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
+  const [researchEnabled, setResearchEnabled] = useState(false)
+  const [navTooltip, setNavTooltip] = useState(null)
   const userMenuRef = useRef(null)
   const notificationsRef = useRef(null)
+  const knownNotificationsRef = useRef(null)
+  const notificationRefreshRef = useRef(null)
 
   const visibleNav = useMemo(
-    () => NAV_ITEMS.filter(item => hasPermission(item.permission)),
-    [hasPermission]
+    () => NAV_ITEMS.filter(item => hasPermission(item.permission) && (!item.feature || (item.feature === 'research' && researchEnabled))),
+    [hasPermission, researchEnabled]
   )
+
+  useEffect(() => {
+    let active = true
+    api.get('/research/config')
+      .then(({ data }) => { if (active) setResearchEnabled(Boolean(data?.enabled)) })
+      .catch(() => { if (active) setResearchEnabled(false) })
+    return () => { active = false }
+  }, [])
 
   const grouped = useMemo(() => visibleNav.reduce((acc, item) => {
     if (!acc[item.group]) acc[item.group] = []
     acc[item.group].push(item)
     return acc
   }, {}), [visibleNav])
+
+  const notificationKey = useCallback(
+    item => `${item.id || item.type}:${item.updated_at || item.message || ''}`,
+    []
+  )
+  const unreadNotifications = useMemo(
+    () => notifications.filter(item => !readNotificationKeys.includes(notificationKey(item))),
+    [notificationKey, notifications, readNotificationKeys]
+  )
+
+  const notificationCopy = useCallback(item => {
+    if (language !== 'ar') return { title: item.title, message: item.message }
+    const quantity = Number(item.quantity || 0)
+    const current = Number(item.quantity || 0)
+    const minimum = Number(item.min_stock || 0)
+    if (item.type === 'stock_out') {
+      return { title: 'نفاد المخزون', message: `${quantity} منتج دون مخزون متاح` }
+    }
+    if (item.type === 'stock_low') {
+      return { title: 'مخزون منخفض', message: `${quantity} منتج بلغ الحد الأدنى للمخزون` }
+    }
+    if (item.type === 'stock_product') {
+      return {
+        title: item.title,
+        message: current <= 0
+          ? `نفد المخزون · الكمية الحالية: ${current} قطعة`
+          : `المتبقي ${current} قطعة · الحد الأدنى: ${minimum}`,
+      }
+    }
+    if (item.type === 'clients') {
+      const amount = String(item.message || '').match(/[\d.,]+/)?.[0] || '0'
+      return { title: 'مستحقات العملاء', message: `${amount} درهم متبقية للتحصيل` }
+    }
+    if (item.type === 'suppliers') {
+      const amount = String(item.message || '').match(/[\d.,]+/)?.[0] || '0'
+      return { title: 'ديون الموردين', message: `${amount} درهم متبقية للأداء` }
+    }
+    if (item.type === 'cash') {
+      return {
+        title: 'الصندوق مفتوح',
+        message: String(item.message || '').replace(/^Session ouverte depuis\s*/i, 'الجلسة مفتوحة منذ '),
+      }
+    }
+    return { title: item.title, message: item.message }
+  }, [language])
+
+  const openNotification = useCallback(item => {
+    const key = notificationKey(item)
+    setReadNotificationKeys(current => {
+      const next = [...new Set([...current, key])].slice(-250)
+      storageSet('library-sabri:read-notifications', JSON.stringify(next))
+      return next
+    })
+    setNotificationsOpen(false)
+    navigate(item.path || '/dashboard')
+  }, [navigate, notificationKey])
+
+  const loadNotifications = useCallback(async ({ announce = false } = {}) => {
+    setNotificationsLoading(true)
+    try {
+      const { data } = await api.get('/notifications')
+      const nextItems = data.items || []
+      const nextKeys = new Set(nextItems.map(notificationKey))
+      if (announce && knownNotificationsRef.current) {
+        const freshStockAlert = nextItems.find(item =>
+          item.type?.startsWith('stock')
+          && !knownNotificationsRef.current.has(notificationKey(item))
+        )
+        if (freshStockAlert) {
+          const StockToastIcon = freshStockAlert.level === 'danger' ? PackageX : AlertTriangle
+          toast.custom(currentToast => (
+            <button
+              type="button"
+              className={`runtime-stock-toast level-${freshStockAlert.level}${currentToast.visible ? ' is-visible' : ''}`}
+              onClick={() => {
+                toast.dismiss(currentToast.id)
+                openNotification(freshStockAlert)
+              }}
+            >
+              <span className="runtime-stock-toast-icon">
+                <StockToastIcon size={19} />
+              </span>
+              <span className="runtime-stock-toast-copy">
+                <strong>{notificationCopy(freshStockAlert).title}</strong>
+                <small>{notificationCopy(freshStockAlert).message}</small>
+              </span>
+              <span
+                className="runtime-stock-toast-close"
+                role="button"
+                aria-label="Fermer"
+                onClick={event => {
+                  event.stopPropagation()
+                  toast.dismiss(currentToast.id)
+                }}
+              >
+                <X size={15} />
+              </span>
+              <i className="runtime-stock-toast-progress" />
+            </button>
+          ), {
+            id: `runtime-${notificationKey(freshStockAlert)}`,
+            duration: 3200,
+            position: language === 'ar' ? 'bottom-left' : 'bottom-right',
+          })
+        }
+      }
+      knownNotificationsRef.current = nextKeys
+      setNotifications(nextItems)
+      setNotificationMeta(data || {})
+    } catch {
+      // A temporary network failure must not erase the last known alerts.
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }, [language, notificationCopy, notificationKey, openNotification])
+
+  const markAllNotificationsRead = () => {
+    const keys = notifications.map(notificationKey)
+    setReadNotificationKeys(keys)
+    storageSet('library-sabri:read-notifications', JSON.stringify(keys))
+  }
 
   const handleLogout = async () => {
     await logout()
@@ -236,9 +384,16 @@ export default function Layout() {
     const getOpenDialogs = () => Array.from(document.querySelectorAll('.modal-overlay'))
       .filter(overlay => overlay.getClientRects().length > 0)
     const getTopDialog = () => getOpenDialogs().at(-1)
-    const requestClose = (overlay) => {
+    const confirmDiscardChanges = () => confirm({
+      title: language === 'ar' ? 'تعديلات غير محفوظة' : 'Modifications non enregistrées',
+      message: dirtyMessage,
+      confirmText: language === 'ar' ? 'إغلاق دون حفظ' : 'Fermer sans enregistrer',
+      cancelText: language === 'ar' ? 'متابعة التعديل' : 'Continuer la modification',
+      tone: 'warning',
+    })
+    const requestClose = async (overlay) => {
       if (!overlay) return
-      if (overlay.dataset.dialogDirty === 'true' && !window.confirm(dirtyMessage)) return
+      if (overlay.dataset.dialogDirty === 'true' && !(await confirmDiscardChanges())) return
       overlay.dataset.dialogAllowClose = 'true'
       const closeButton = overlay.querySelector('.modal-header .btn-icon, [data-modal-close]')
       if (closeButton) closeButton.click()
@@ -298,10 +453,10 @@ export default function Layout() {
         overlay.dataset.dialogDirty === 'true'
         && overlay.dataset.dialogAllowClose !== 'true'
         && (isBackdrop || isHeaderClose || isCancelButton)
-        && !window.confirm(dirtyMessage)
       ) {
         event.preventDefault()
         event.stopPropagation()
+        requestClose(overlay)
       }
     }
     const handleKeyDown = (event) => {
@@ -327,7 +482,7 @@ export default function Layout() {
       document.removeEventListener('click', handleClick, true)
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [language])
+  }, [confirm, language])
 
   useEffect(() => {
     setProfileForm({
@@ -349,16 +504,29 @@ export default function Layout() {
   }, [])
 
   useEffect(() => {
-    let mounted = true
-    const loadNotifications = () => {
-      api.get('/notifications')
-        .then(({ data }) => mounted && setNotifications(data.items || []))
-        .catch(() => {})
-    }
     loadNotifications()
-    const timer = window.setInterval(loadNotifications, 60000)
-    return () => { mounted = false; window.clearInterval(timer) }
-  }, [])
+    const scheduleRefresh = () => {
+      window.clearTimeout(notificationRefreshRef.current)
+      notificationRefreshRef.current = window.setTimeout(
+        () => loadNotifications({ announce: true }),
+        350
+      )
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') loadNotifications({ announce: true })
+    }
+    window.addEventListener('proerp:data-changed', scheduleRefresh)
+    window.addEventListener('focus', scheduleRefresh)
+    document.addEventListener('visibilitychange', onVisibility)
+    const timer = window.setInterval(() => loadNotifications({ announce: true }), 15000)
+    return () => {
+      window.clearInterval(timer)
+      window.clearTimeout(notificationRefreshRef.current)
+      window.removeEventListener('proerp:data-changed', scheduleRefresh)
+      window.removeEventListener('focus', scheduleRefresh)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [loadNotifications])
 
   const handleMenuToggle = () => {
     if (isMobile) {
@@ -472,7 +640,14 @@ export default function Layout() {
     return (
       <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
-          <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt={language === 'ar' ? 'مــكـتبة صــبــري' : 'LIBRARY SABRI'} />
+          <button
+            type="button"
+            className="sidebar-logo-refresh"
+            onClick={() => window.location.reload()}
+            aria-label={language === 'ar' ? 'تحديث التطبيق' : "Actualiser l'application"}
+          >
+            <img className="logo-icon logo-image" src={getLogoUrl(visualSettings)} alt={language === 'ar' ? 'مــكـتبة صــبــري' : 'LIBRARY SABRI'} />
+          </button>
           <span className="logo-text">
             <strong>{language === 'ar' ? 'مــكـتبة صــبــري' : 'LIBRARY SABRI'}</strong>
             <small>{language === 'ar' ? 'LIBRARY SABRI' : 'مــكـتبة صــبــري'}</small>
@@ -489,10 +664,35 @@ export default function Layout() {
                 <NavLink
                   key={path}
                   to={path}
-                  title={label}
                   data-tooltip={label}
                   className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                  onClick={() => setMobileOpen(false)}
+                  onClick={() => {
+                    setNavTooltip(null)
+                    setMobileOpen(false)
+                  }}
+                  onMouseEnter={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    if (isCollapsed) {
+                      setNavTooltip({
+                        label,
+                        top: rect.top + (rect.height / 2),
+                        left: language === 'ar' ? rect.left - 13 : rect.right + 13,
+                        rtl: language === 'ar',
+                      })
+                    }
+                  }}
+                  onMouseLeave={() => setNavTooltip(null)}
+                  onFocus={(event) => {
+                    if (!isCollapsed) return
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    setNavTooltip({
+                      label,
+                      top: rect.top + (rect.height / 2),
+                      left: language === 'ar' ? rect.left - 13 : rect.right + 13,
+                      rtl: language === 'ar',
+                    })
+                  }}
+                  onBlur={() => setNavTooltip(null)}
                 >
                   <Icon size={18} />
                   <span className="nav-item-label">{label}</span>
@@ -512,7 +712,7 @@ export default function Layout() {
               </div>
             </div>
           )}
-          <button className="btn btn-secondary btn-sm" onClick={() => requestSensitiveAction('logout')} title={t('layout.logout')}>
+          <button className="btn btn-secondary btn-sm" onClick={() => requestSensitiveAction('logout')} aria-label={t('layout.logout')}>
             <LogOut size={15} />
             {!isCollapsed && <span>{t('layout.logout')}</span>}
           </button>
@@ -525,37 +725,45 @@ export default function Layout() {
     <div className={`app-layout ${collapsed ? 'sidebar-collapsed' : ''}`}>
       {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)} />}
 
-      <div className="sidebar-wrapper desktop-only"><SidebarContent /></div>
-      <div className={`sidebar-wrapper mobile-sidebar ${mobileOpen ? 'open' : ''}`}><SidebarContent mobile /></div>
+      <div className="sidebar-wrapper desktop-only">{SidebarContent()}</div>
+      <div className={`sidebar-wrapper mobile-sidebar ${mobileOpen ? 'open' : ''}`}>{SidebarContent({ mobile: true })}</div>
 
       <main className="main-content">
         <header className="topbar">
           <button
-            className={`btn btn-secondary btn-icon mobile-menu-btn ${!isMobile && !collapsed ? 'nav-close-mode' : ''}`}
+            className={`btn btn-secondary btn-icon mobile-menu-btn ${!isMobile ? 'sidebar-panel-control' : mobileOpen ? 'nav-close-mode' : ''}`}
             onClick={handleMenuToggle}
             aria-label={isMobile
               ? (mobileOpen ? t('layout.closeMenu') : t('layout.openMenu'))
               : (collapsed ? t('layout.showMenu') : t('layout.hideMenu'))
             }
           >
-            {(isMobile ? mobileOpen : !collapsed) ? <X size={18} /> : <Menu size={18} />}
+            {isMobile
+              ? (mobileOpen ? <X size={18} /> : <Menu size={18} />)
+              : (collapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />)
+            }
           </button>
           <button className="command-trigger" onClick={() => setCommandOpen(true)}>
             <Search size={16} />
-            <span>Recherche</span>
+            <span>{t('common.search')}</span>
             <kbd>Ctrl K</kbd>
           </button>
           <div style={{ flex: 1 }} />
           <button
-            className={`theme-toggle theme-toggle-${theme}`}
+            className={`theme-toggle theme-toggle-${theme}${language === 'ar' ? ' theme-toggle-ar' : ''}`}
             onClick={toggleTheme}
-            title={theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
-            aria-label={theme === 'dark' ? 'Activer le mode clair' : 'Activer le mode sombre'}
+            aria-label={language === 'ar'
+              ? (theme === 'dark' ? 'تفعيل الوضع النهاري' : 'تفعيل الوضع الليلي')
+              : (theme === 'dark' ? 'Activer le mode clair' : 'Activer le mode sombre')}
             aria-pressed={theme === 'dark'}
           >
             <span className="theme-toggle-label" aria-hidden="true">
-              <strong>{theme === 'dark' ? 'DARK' : 'LIGHT'}</strong>
-              <small>MODE</small>
+              <strong>
+                {language === 'ar'
+                  ? (theme === 'dark' ? 'الوضع الليلي' : 'الوضع النهاري')
+                  : (theme === 'dark' ? t('common.themeDark') : t('common.themeLight'))}
+              </strong>
+              {language !== 'ar' && <small>{t('common.themeMode')}</small>}
             </span>
             <span className="theme-toggle-thumb" aria-hidden="true">
               <span className="theme-sun"><Sun size={23} /></span>
@@ -568,37 +776,76 @@ export default function Layout() {
             <button
               className="btn btn-secondary btn-icon notification-btn"
               onClick={() => setNotificationsOpen(open => !open)}
-              title="Notifications"
-              aria-label="Notifications"
+              aria-label={language === 'ar' ? 'الإشعارات' : 'Notifications'}
               aria-haspopup="menu"
               aria-expanded={notificationsOpen}
             >
               <Bell size={17} />
             </button>
-            {notifications.length > 0 && (
-              <span className="notification-count" aria-hidden="true">{notifications.length}</span>
+            {unreadNotifications.length > 0 && (
+              <span className="notification-count" aria-label={language === 'ar' ? `${unreadNotifications.length} إشعار غير مقروء` : `${unreadNotifications.length} notification(s) non lue(s)`}>
+                {unreadNotifications.length > 99 ? '99+' : unreadNotifications.length}
+              </span>
             )}
             {notificationsOpen && (
               <div className="notifications-dropdown" role="menu">
                 <div className="notifications-head">
-                  <strong>Notifications</strong>
-                  <small>{notifications.length} alerte(s)</small>
+                  <div>
+                    <strong>{language === 'ar' ? 'الإشعارات' : 'Notifications'}</strong>
+                    <small>
+                      {language === 'ar'
+                        ? `${notificationMeta.stock_alert_count || 0} تنبيه مخزون · ${unreadNotifications.length} غير مقروء`
+                        : `${notificationMeta.stock_alert_count || 0} stock · ${unreadNotifications.length} non lue(s)`}
+                    </small>
+                  </div>
+                  <div className="notifications-actions">
+                    <button
+                      type="button"
+                      className={`notification-tool${notificationsLoading ? ' is-loading' : ''}`}
+                      onClick={() => loadNotifications({ announce: false })}
+                      aria-label={language === 'ar' ? 'تحديث الإشعارات' : 'Actualiser les notifications'}
+                      disabled={notificationsLoading}
+                    >
+                      <RefreshCw size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="notification-tool"
+                      onClick={markAllNotificationsRead}
+                      aria-label={language === 'ar' ? 'تحديد الكل كمقروء' : 'Tout marquer comme lu'}
+                      disabled={!unreadNotifications.length}
+                    >
+                      <CheckCheck size={16} />
+                    </button>
+                  </div>
                 </div>
                 {notifications.length === 0 ? (
-                  <div className="notifications-empty">Aucune alerte importante.</div>
-                ) : notifications.map((item, index) => (
+                  <div className="notifications-empty">
+                    <CheckCheck size={24} />
+                    <strong>{language === 'ar' ? 'كل شيء محدّث' : 'Tout est à jour'}</strong>
+                    <small>{language === 'ar' ? 'لا توجد تنبيهات مهمة حالياً.' : 'Aucune alerte importante pour le moment.'}</small>
+                  </div>
+                ) : notifications.map(item => {
+                  const isUnread = !readNotificationKeys.includes(notificationKey(item))
+                  const StatusIcon = item.type === 'stock_out' ? PackageX : AlertTriangle
+                  return (
                   <button
-                    key={`${item.type}-${index}`}
-                    className={`notification-item level-${item.level}`}
-                    onClick={() => { setNotificationsOpen(false); navigate(item.path || '/dashboard') }}
+                    key={notificationKey(item)}
+                    className={`notification-item level-${item.level}${isUnread ? ' is-unread' : ''}`}
+                    onClick={() => openNotification(item)}
                   >
-                    <span />
+                    <span className="notification-item-icon"><StatusIcon size={16} /></span>
                     <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.message}</small>
+                      <strong>{notificationCopy(item).title}</strong>
+                      <small>{notificationCopy(item).message}</small>
                     </div>
+                    {isUnread && <i className="notification-unread-dot" aria-label={language === 'ar' ? 'غير مقروء' : 'Non lue'} />}
                   </button>
-                ))}
+                )})}
+                <div className="notifications-runtime">
+                  <span className="runtime-pulse" />
+                  {language === 'ar' ? 'تحديث تلقائي · كل 15 ثانية' : 'Mise à jour automatique · toutes les 15 secondes'}
+                </div>
               </div>
             )}
           </div>
@@ -805,6 +1052,16 @@ export default function Layout() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {navTooltip && (
+        <div
+          className={`sidebar-nav-tooltip${navTooltip.rtl ? ' is-rtl' : ''}`}
+          style={{ top: navTooltip.top, left: navTooltip.left }}
+          role="tooltip"
+        >
+          {navTooltip.label}
         </div>
       )}
 

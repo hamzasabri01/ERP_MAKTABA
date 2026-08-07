@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, BarChart2, Boxes, CalendarDays, Clock3, Download, FileSpreadsheet,
   FileText, PackageX, PieChart as PieIcon, RefreshCw, ShoppingCart,
-  TrendingDown, TrendingUp, Wallet, X
+  TrendingDown, TrendingUp, Wallet, X, Check
 } from 'lucide-react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie,
@@ -54,6 +54,19 @@ export default function ReportsPage() {
     if (period !== 'custom') loadOverview()
   }, [period])
 
+  const selectPeriod = nextPeriod => {
+    if (nextPeriod === 'custom') {
+      const fallbackEnd = new Date()
+      const fallbackStart = new Date(fallbackEnd.getFullYear(), fallbackEnd.getMonth(), 1)
+      setStartDate(overview?.period?.start || fallbackStart.toISOString().slice(0, 10))
+      setEndDate(overview?.period?.end || fallbackEnd.toISOString().slice(0, 10))
+    }
+    setPeriod(nextPeriod)
+  }
+
+  const customRangeValid = Boolean(startDate && endDate && startDate <= endDate)
+  const customRangeApplied = period === 'custom' && overview?.period?.start === startDate && overview?.period?.end === endDate
+
   const summary = overview?.summary || {}
   const trend = overview?.trend || {}
   const cash = overview?.cash || {}
@@ -61,6 +74,7 @@ export default function ReportsPage() {
   const categories = overview?.categories || []
   const timeseries = overview?.timeseries || []
   const topItems = overview?.top_items || []
+  const reportUsers = overview?.users || []
   const dormantProducts = overview?.dormant_products || []
   const hourlyPerformance = overview?.hourly_performance || []
   const comparisons = overview?.comparisons || {}
@@ -100,6 +114,9 @@ export default function ReportsPage() {
       [],
       ['Produit / service', 'Type', 'Quantité', 'CA', 'Bénéfice brut'],
       ...topItems.map(item => [item.name, item.product_type, item.quantity, item.revenue, item.gross_profit]),
+      [],
+      ['Utilisateur', 'Nombre de factures', "Chiffre d'affaires", 'Montant encaissé'],
+      ...reportUsers.map(item => [item.user_name, item.invoice_count, item.revenue, item.paid]),
     ]
     const xmlEscape = value => String(value ?? '').replace(/[<>&'"]/g, char => ({
       '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;',
@@ -148,6 +165,13 @@ export default function ReportsPage() {
       theme: 'striped',
       headStyles: { fillColor: [20, 158, 120] },
     })
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 10,
+      head: [['Utilisateur', 'Factures', 'CA', 'Encaisse']],
+      body: reportUsers.map(item => [item.user_name, item.invoice_count, fmt(item.revenue), fmt(item.paid)]),
+      theme: 'striped',
+      headStyles: { fillColor: [124, 58, 237] },
+    })
     doc.save(`rapport-${overview.period.start}-${overview.period.end}.pdf`)
   }
 
@@ -159,24 +183,29 @@ export default function ReportsPage() {
           <h1>Rapports & tableau de bord</h1>
           <p>{overview ? `Periode: ${overview.period.start} - ${overview.period.end}` : 'Lecture des indicateurs en cours'}</p>
         </div>
-        <div className="reports-actions">
-          <div className="reports-segmented">
-            {PERIODS.map(([id, label]) => (
-              <button key={id} className={period === id ? 'active' : ''} onClick={() => setPeriod(id)}>{label}</button>
-            ))}
-            <button className={period === 'custom' ? 'active' : ''} onClick={() => setPeriod('custom')}>Personnalisé</button>
+        <div className={`reports-actions ${period === 'custom' ? 'is-custom' : ''}`}>
+          <div className="reports-controls-row">
+            <div className="reports-segmented">
+              {PERIODS.map(([id, label]) => (
+                <button key={id} className={period === id ? 'active' : ''} onClick={() => selectPeriod(id)}>{label}</button>
+              ))}
+              <button className={period === 'custom' ? 'active' : ''} onClick={() => selectPeriod('custom')}>Personnalisé</button>
+            </div>
+            <div className="reports-export-actions">
+              <button className="btn btn-secondary" onClick={exportPdf} disabled={!overview}><FileText size={16} /> PDF</button>
+              <button className="btn btn-secondary" onClick={exportExcel} disabled={!overview}><FileSpreadsheet size={16} /> Excel</button>
+              <button className="btn btn-secondary" onClick={() => loadOverview(true)} disabled={refreshing}>
+                <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} /> Actualiser
+              </button>
+            </div>
           </div>
-          {period === 'custom' && <div className="reports-date-filter">
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-            <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
-            <button className="btn btn-primary" disabled={!startDate || !endDate} onClick={() => loadOverview()}>Appliquer</button>
+          {period === 'custom' && <div className="reports-date-filter" role="group" aria-label="Periode personnalisee">
+            <span className="reports-date-filter-icon"><CalendarDays size={20}/></span>
+            <label><span>Date de debut</span><input type="date" value={startDate} max={endDate || undefined} onChange={e => setStartDate(e.target.value)} /></label>
+            <span className="reports-date-arrow">→</span>
+            <label><span>Date de fin</span><input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} /></label>
+            <button className={`btn btn-primary reports-apply-range ${customRangeApplied ? 'is-applied' : ''}`} disabled={!customRangeValid || customRangeApplied || loading} onClick={() => loadOverview()}>{customRangeApplied ? <Check size={16}/> : <CalendarDays size={16}/>} {customRangeApplied ? 'Appliquée' : 'Appliquer'}</button>
           </div>}
-          <button className="btn btn-secondary" onClick={exportPdf} disabled={!overview}><FileText size={16} /> PDF</button>
-          <button className="btn btn-secondary" onClick={exportExcel} disabled={!overview}><FileSpreadsheet size={16} /> Excel</button>
-          <button className="btn btn-secondary" onClick={() => loadOverview(true)} disabled={refreshing}>
-            <RefreshCw size={16} className={refreshing ? 'spin-icon' : ''} />
-            Actualiser
-          </button>
         </div>
       </section>
 

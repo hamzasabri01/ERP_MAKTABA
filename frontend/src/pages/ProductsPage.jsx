@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { api, fmt, isVatEnabled, resolveMediaUrl } from '../lib/api'
+import { api, apiErrorMessage, fmt, isVatEnabled, resolveMediaUrl } from '../lib/api'
 import { Plus, Search, Edit2, Trash2, Package, AlertTriangle, Barcode, Boxes, Check, ImagePlus, Minus, Smartphone, Sparkles, ShoppingBag, Wifi, X, Upload, Download, FileSpreadsheet, Printer } from 'lucide-react'
 import QRCode from 'qrcode'
 import toast from 'react-hot-toast'
@@ -34,6 +34,7 @@ export default function ProductsPage() {
   const [modal, setModal]       = useState(null)
   const [selected, setSelected] = useState(null)
   const [form, setForm]         = useState(EMPTY)
+  const [formErrors, setFormErrors] = useState({})
   const [saving, setSaving]     = useState(false)
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState('')
@@ -97,6 +98,7 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setForm(EMPTY)
+    setFormErrors({})
     setSelected(null)
     setBundleComponents([])
     resetImageInput()
@@ -113,6 +115,7 @@ export default function ProductsPage() {
   }
   const openEdit   = async (p) => {
     setForm({ ...p, category_id: p.category_id || '', supplier_id: p.supplier_id || '' })
+    setFormErrors({})
     setSelected(p)
     setNextCode('')
     resetImageInput()
@@ -155,7 +158,7 @@ export default function ProductsPage() {
     }
     setEanScannerStarting(true)
     try {
-      const { data } = await api.post('/mobile-scanner/sessions')
+      const { data } = await api.post('/mobile-scanner/sessions', null, { timeout:45000 })
       const current = new URL(window.location.href)
       if (!data.public_url && current.protocol !== 'https:') {
         throw new Error('Le tunnel HTTPS du scanner est temporairement indisponible. Réessayez dans quelques secondes.')
@@ -178,7 +181,7 @@ export default function ProductsPage() {
       setEanArmed(true)
       setEanScannerModalOpen(true)
     } catch (error) {
-      toast.error(error.response?.data?.detail || error.message || 'Impossible de démarrer le scanner EAN')
+      toast.error(apiErrorMessage(error, 'Impossible de démarrer le scanner EAN'))
     } finally {
       setEanScannerStarting(false)
     }
@@ -239,7 +242,9 @@ export default function ProductsPage() {
     const url = URL.createObjectURL(file)
     const img = new Image()
     img.onload = () => {
-      const maxSide = 900
+      // Preserve enough detail for POS cards and printed documents while keeping
+      // the uploaded file lightweight.
+      const maxSide = 1400
       const scale = Math.min(1, maxSide / Math.max(img.width, img.height))
       const width = Math.max(1, Math.round(img.width * scale))
       const height = Math.max(1, Math.round(img.height * scale))
@@ -247,6 +252,8 @@ export default function ProductsPage() {
       canvas.width = width
       canvas.height = height
       const ctx = canvas.getContext('2d')
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.drawImage(img, 0, 0, width, height)
       canvas.toBlob(blob => {
         URL.revokeObjectURL(url)
@@ -257,7 +264,7 @@ export default function ProductsPage() {
           { type: 'image/webp' },
         )
         resolve(optimized)
-      }, 'image/webp', 0.82)
+      }, 'image/webp', 0.9)
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)
@@ -307,15 +314,91 @@ export default function ProductsPage() {
       setForm(f => ({ ...f, image_path: null }))
       load()
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Erreur suppression image')
+      toast.error(apiErrorMessage(e, 'Erreur suppression image'))
     }
   }
 
   const handleSave = async () => {
-    if (!form.name?.trim()) return toast.error('Le nom est obligatoire')
+    const errors = {}
+    const normalized = { ...form }
+    const name = String(form.name || '').trim()
+    if (!name) errors.name = 'Le nom est obligatoire'
+    else if (name.length > 200) errors.name = 'Maximum 200 caractères'
+    normalized.name = name
+
+    const parseNonNegative = (key, label, { fallback = 0, positive = false, decimals = 4 } = {}) => {
+      const raw = String(form[key] ?? '').trim().replace(',', '.')
+      const value = raw === '' && !positive ? fallback : Number(raw)
+      if (!Number.isFinite(value)) errors[key] = `${label} doit être un nombre valide`
+      else if (positive ? value <= 0 : value < 0) {
+        errors[key] = positive ? `${label} doit être supérieur à zéro` : `${label} ne peut pas être négatif`
+      } else if (Math.abs(value) > 99999999999999) {
+        errors[key] = `${label} est trop élevé`
+      } else {
+        const decimalPart = raw.split('.')[1] || ''
+        if (decimalPart.length > decimals) errors[key] = `${label}: maximum ${decimals} décimales`
+        else normalized[key] = value
+      }
+    }
+
+    parseNonNegative('purchase_price', "Le prix d'achat")
+    parseNonNegative('sale_price', 'Le prix de vente')
+    if (form.product_type === 'product') {
+      parseNonNegative('stock_quantity', 'Le stock actuel', { decimals:0 })
+      parseNonNegative('min_stock', 'Le stock minimum', { decimals:0 })
+      parseNonNegative('purchase_to_base_factor', "Le contenu de l'unité d'achat", { positive:true, decimals:0 })
+    } else {
+      normalized.stock_quantity = 0
+      normalized.min_stock = 0
+      normalized.purchase_to_base_factor = 1
+    }
+
+    const barcode = String(form.barcode || '').replace(/\s/g, '').trim()
+    if (barcode.length > 100) errors.barcode = 'Le code EAN ne peut pas dépasser 100 caractères'
+    else if (/[\u0000-\u001f\u007f]/.test(barcode)) errors.barcode = 'Le code EAN contient des caractères invalides'
+    normalized.barcode = barcode
+
+    if (!String(form.unit || '').trim()) errors.unit = "L'unité de vente est obligatoire"
+    if (form.product_type === 'product' && !String(form.purchase_unit || '').trim()) {
+      errors.purchase_unit = "L'unité d'achat est obligatoire"
+    }
+
+    const allowedTaxRates = [0, 7, 10, 14, 20]
+    const taxRate = Number(form.tax_rate)
+    if (!Number.isFinite(taxRate) || !allowedTaxRates.includes(taxRate)) {
+      errors.tax_rate = 'Taux de TVA invalide'
+    } else normalized.tax_rate = taxRate
+
+    if (form.product_type === 'bundle') {
+      if (!bundleComponents.length) errors.bundle_components = 'Ajoutez au moins un produit au pack scolaire'
+      const ids = bundleComponents.map(row => Number(row.product_id)).filter(Boolean)
+      if (ids.length !== bundleComponents.length) errors.bundle_components = 'Sélectionnez un produit dans chaque ligne'
+      else if (new Set(ids).size !== ids.length) errors.bundle_components = 'Un produit ne peut apparaître deux fois dans le pack'
+      else if (bundleComponents.some(row => !Number.isFinite(Number(row.quantity)) || Number(row.quantity) <= 0)) {
+        errors.bundle_components = 'Chaque quantité du pack doit être strictement positive'
+      }
+    }
+
+    if (Object.keys(errors).length) {
+      setFormErrors(errors)
+      const firstField = Object.keys(errors)[0]
+      window.requestAnimationFrame(() => {
+        document.querySelector(`[data-product-field="${firstField}"]`)?.focus()
+      })
+      return toast.error(Object.values(errors)[0])
+    }
+
+    setFormErrors({})
     setSaving(true)
     try {
-      const payload = { ...form, purchase_price: +form.purchase_price||0, sale_price: +form.sale_price||0, stock_quantity: +form.stock_quantity||0, min_stock: +form.min_stock||0, purchase_to_base_factor: +form.purchase_to_base_factor||1, tax_rate: +form.tax_rate||20, category_id: form.category_id||null, supplier_id: form.supplier_id||null }
+      const payload = {
+        ...normalized,
+        stock_quantity: form.product_type === 'product' ? normalized.stock_quantity : 0,
+        min_stock: form.product_type === 'product' ? normalized.min_stock : 0,
+        purchase_to_base_factor: form.product_type === 'product' ? normalized.purchase_to_base_factor : 1,
+        category_id: form.category_id || null,
+        supplier_id: form.supplier_id || null,
+      }
       let saved
       if (!selected) {
         saved = await api.post('/products', payload)
@@ -328,13 +411,15 @@ export default function ProductsPage() {
         toast.success('Produit mis à jour')
       }
       if (payload.product_type === 'bundle') {
-        if (!bundleComponents.length || bundleComponents.some(row => !row.product_id || !(row.quantity > 0))) {
-          throw new Error('Ajoutez des produits valides au pack scolaire')
-        }
-        await api.put(`/products/${saved.data.id}/components`, { components:bundleComponents })
+        await api.put(`/products/${saved.data.id}/components`, {
+          components: bundleComponents.map(row => ({
+            product_id: Number(row.product_id),
+            quantity: Number(row.quantity),
+          })),
+        })
       }
       setModal(null); load()
-    } catch(e) { toast.error(e.response?.data?.detail || e.message || 'Erreur') }
+    } catch(e) { toast.error(apiErrorMessage(e, 'Impossible d’enregistrer le produit')) }
     finally { setSaving(false) }
   }
 
@@ -407,7 +492,7 @@ export default function ProductsPage() {
       setSelectedProductIds(new Set())
       await load()
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Impossible d’archiver la sélection')
+      toast.error(apiErrorMessage(error, 'Impossible d’archiver la sélection'))
     } finally {
       setBulkArchiving(false)
     }
@@ -430,7 +515,7 @@ export default function ProductsPage() {
       downloadBlob(response.data, `products-${new Date().toISOString().slice(0, 10)}.csv`)
       toast.success('Export produits prepare')
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Erreur export')
+      toast.error(apiErrorMessage(e, 'Erreur export'))
     }
   }
 
@@ -456,7 +541,7 @@ export default function ProductsPage() {
         : 'Tous les produits possèdent déjà un code EAN')
       await load()
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Impossible de générer les codes EAN')
+      toast.error(apiErrorMessage(error, 'Impossible de générer les codes EAN'))
     } finally {
       setGeneratingEan(false)
     }
@@ -490,7 +575,7 @@ export default function ProductsPage() {
           printable = correctedSelection.filter(product => isValidEan13(product.barcode))
           toast.success(`${data.repaired_count} code(s) EAN-13 corrigé(s)`)
         } catch (error) {
-          toast.error(error.response?.data?.detail || 'Impossible de corriger les codes EAN')
+          toast.error(apiErrorMessage(error, 'Impossible de corriger les codes EAN'))
         } finally {
           setLabelPrint(current => ({ ...current, repairing:false }))
         }
@@ -577,13 +662,30 @@ export default function ProductsPage() {
     } catch (e) {
       setImportProgress(0)
       setImportStep('Import interrompu')
-      toast.error(e.response?.data?.detail || 'Erreur import')
+      toast.error(apiErrorMessage(e, 'Erreur import'))
     } finally {
       setImporting(false)
     }
   }
 
-  const F = (key) => ({ value: form[key] ?? '', onChange: e => setForm(f => ({ ...f, [key]: e.target.value })) })
+  const F = (key) => ({
+    value: form[key] ?? '',
+    'data-product-field': key,
+    'aria-invalid': Boolean(formErrors[key]),
+    onChange: e => {
+      const value = e.target.value
+      setForm(f => ({ ...f, [key]: value }))
+      setFormErrors(current => {
+        if (!current[key]) return current
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+    },
+  })
+  const FieldError = ({ name }) => formErrors[name]
+    ? <small className="product-field-error" role="alert">{formErrors[name]}</small>
+    : null
   const productUnits = String(settings.product_units || 'pcs,kg,g,l,ml,m,m2,m3,boite,lot').split(',').map(item => item.trim()).filter(Boolean)
   const openCatalogSettings = () => navigate('/settings?tab=catalog')
 
@@ -897,6 +999,7 @@ export default function ProductsPage() {
                 <div className="form-group" style={{ gridColumn:'1/-1' }}>
                   <label className="form-label">Nom *</label>
                   <input {...F('name')} placeholder="Nom du produit ou service" />
+                  <FieldError name="name" />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Code</label>
@@ -908,7 +1011,12 @@ export default function ProductsPage() {
                     <Barcode size={18}/>
                     <input
                       value={form.barcode || ''}
-                      onChange={event => setForm(current => ({ ...current, barcode:event.target.value.replace(/\s/g, '') }))}
+                      data-product-field="barcode"
+                      aria-invalid={Boolean(formErrors.barcode)}
+                      onChange={event => {
+                        setForm(current => ({ ...current, barcode:event.target.value.replace(/\s/g, '') }))
+                        setFormErrors(current => ({ ...current, barcode:undefined }))
+                      }}
                       placeholder="Scanner ou saisir le code EAN"
                       aria-label="Code EAN"
                       inputMode="numeric"
@@ -930,6 +1038,7 @@ export default function ProductsPage() {
                       </button>
                     )}
                   </div>
+                  <FieldError name="barcode" />
                   <small className={`ean-field-hint ${eanScanner?.connected ? 'is-connected' : ''}`}>
                     {form.barcode
                       ? 'Code EAN modifiable manuellement ou remplaçable par un nouveau scan'
@@ -997,6 +1106,7 @@ export default function ProductsPage() {
                   <select {...F('unit')}>
                     {productUnits.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
+                  <FieldError name="unit" />
                   <button type="button" className="btn btn-sm reference-action-btn" onClick={openCatalogSettings}>
                     <Plus size={14} /> Gerer les unites
                   </button>
@@ -1007,10 +1117,26 @@ export default function ProductsPage() {
                     <select {...F('purchase_unit')}>
                       {productUnits.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
+                    <FieldError name="purchase_unit" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Contenu de l'unité d'achat</label>
-                    <input {...F('purchase_to_base_factor')} type="number" min="0.0001" step="0.0001" />
+                    <input
+                      value={form.purchase_to_base_factor ?? ''}
+                      data-product-field="purchase_to_base_factor"
+                      aria-invalid={Boolean(formErrors.purchase_to_base_factor)}
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      onChange={event => {
+                        const value = event.target.value
+                        if (value !== '' && !/^\d+$/.test(value)) return
+                        setForm(current => ({ ...current, purchase_to_base_factor:value }))
+                        setFormErrors(current => ({ ...current, purchase_to_base_factor:undefined }))
+                      }}
+                    />
+                    <FieldError name="purchase_to_base_factor" />
                     <small className="text-muted">1 {form.purchase_unit || 'unité'} = {form.purchase_to_base_factor || 1} {form.unit || 'pièce'}(s)</small>
                   </div>
                   <div className="form-group fractional-option-group">
@@ -1049,7 +1175,10 @@ export default function ProductsPage() {
                           min="0.0001"
                           step="0.0001"
                           value={component.quantity}
-                          onChange={e => setBundleComponents(rows => rows.map((row, i) => i === index ? { ...row, quantity:+e.target.value||1 } : row))}
+                          onChange={e => {
+                            setBundleComponents(rows => rows.map((row, i) => i === index ? { ...row, quantity:e.target.value } : row))
+                            setFormErrors(current => ({ ...current, bundle_components:undefined }))
+                          }}
                           placeholder="Quantité"
                         />
                         <div className="bundle-component-stock">
@@ -1065,7 +1194,10 @@ export default function ProductsPage() {
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => setBundleComponents(rows => [...rows, { product_id:'', quantity:1 }])}>
                       <Plus size={14} /> Ajouter un produit au pack
                     </button>
-                    {bundleComponents.some(component => component.product_id) && (
+                    <div data-product-field="bundle_components" tabIndex={-1}>
+                      <FieldError name="bundle_components" />
+                    </div>
+                    {bundleComponents.some(component => component.product_id && Number(component.quantity) > 0) && (
                       <div className="bundle-capacity-preview">
                         <span>Capacité estimée</span>
                         <strong>{Math.min(...bundleComponents.filter(component => component.product_id && component.quantity > 0).map(component => Math.floor((productMap.get(+component.product_id)?.stock_quantity || 0) / component.quantity)))} pack(s)</strong>
@@ -1076,25 +1208,66 @@ export default function ProductsPage() {
                 <div className="form-group">
                   <label className="form-label">Prix d'achat (MAD)</label>
                   <input {...F('purchase_price')} type="number" min="0" step="0.01" />
+                  <FieldError name="purchase_price" />
                 </div>
                 <div className="form-group">
                   <label className="form-label">{vatEnabled ? 'Prix de vente HT (MAD)' : 'Prix de vente (MAD)'}</label>
                   <input {...F('sale_price')} type="number" min="0" step="0.01" />
+                  <FieldError name="sale_price" />
                 </div>
                 {vatEnabled ? <div className="form-group">
                   <label className="form-label">TVA (%)</label>
-                  <select value={form.tax_rate||20} onChange={e => setForm(f=>({...f,tax_rate:+e.target.value}))}>
+                  <select
+                    value={form.tax_rate ?? 20}
+                    data-product-field="tax_rate"
+                    aria-invalid={Boolean(formErrors.tax_rate)}
+                    onChange={e => {
+                      setForm(f => ({ ...f, tax_rate:Number(e.target.value) }))
+                      setFormErrors(current => ({ ...current, tax_rate:undefined }))
+                    }}
+                  >
                     {[0,7,10,14,20].map(r => <option key={r} value={r}>{r}%</option>)}
                   </select>
+                  <FieldError name="tax_rate" />
                 </div> : null}
                 {form.product_type === 'product' && <>
                   <div className="form-group">
                     <label className="form-label">Stock actuel</label>
-                    <input {...F('stock_quantity')} type="number" min="0" step="0.01" />
+                    <input
+                      value={form.stock_quantity ?? ''}
+                      data-product-field="stock_quantity"
+                      aria-invalid={Boolean(formErrors.stock_quantity)}
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      onChange={event => {
+                        const value = event.target.value
+                        if (value !== '' && !/^\d+$/.test(value)) return
+                        setForm(current => ({ ...current, stock_quantity:value }))
+                        setFormErrors(current => ({ ...current, stock_quantity:undefined }))
+                      }}
+                    />
+                    <FieldError name="stock_quantity" />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Stock minimum</label>
-                    <input {...F('min_stock')} type="number" min="0" step="0.01" />
+                    <input
+                      value={form.min_stock ?? ''}
+                      data-product-field="min_stock"
+                      aria-invalid={Boolean(formErrors.min_stock)}
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      onChange={event => {
+                        const value = event.target.value
+                        if (value !== '' && !/^\d+$/.test(value)) return
+                        setForm(current => ({ ...current, min_stock:value }))
+                        setFormErrors(current => ({ ...current, min_stock:undefined }))
+                      }}
+                    />
+                    <FieldError name="min_stock" />
                   </div>
                 </>}
                 <div className="form-group" style={{ gridColumn:'1/-1' }}>
@@ -1106,7 +1279,7 @@ export default function ProductsPage() {
               {+form.purchase_price > 0 && +form.sale_price > 0 && (
                 <div className="alert alert-info" style={{ marginTop:'1rem' }}>
                   Marge prévue: <strong>{fmt(((form.sale_price - form.purchase_price) / form.purchase_price)*100, 1)}%</strong>
-                  {vatEnabled ? <>&nbsp;— Prix TTC: <strong>{fmt(+form.sale_price * (1 + (+form.tax_rate||20)/100))} MAD</strong></> : null}
+                  {vatEnabled ? <>&nbsp;— Prix TTC: <strong>{fmt(+form.sale_price * (1 + Number(form.tax_rate ?? 20)/100))} MAD</strong></> : null}
                 </div>
               )}
             </div>

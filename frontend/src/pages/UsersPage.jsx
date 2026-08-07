@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { CheckCircle2, Edit2, Plus, ShieldCheck, Trash2, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useConfirm } from '../components/ui/ConfirmDialog'
+import { useI18n } from '../lib/i18n'
 
 const USER_EMPTY = { username: '', password: '', full_name: '', email: '', role_id: '', is_active: true }
 const ROLE_EMPTY = { name: '', description: '', permissions: [] }
@@ -16,6 +17,15 @@ const PERMISSIONS = [
   { key: 'sales.service_price_edit', label: 'Modifier le prix des services', group: 'Ventes sensibles' },
   { key: 'sales.product_price_edit', label: 'Modifier le prix des produits', group: 'Ventes sensibles' },
   { key: 'purchases', label: 'Achats', group: 'Commerce' },
+  { key: 'research.view', label: 'Voir les recherches', group: 'Recherches scolaires' },
+  { key: 'research.create', label: 'Créer une demande', group: 'Recherches scolaires' },
+  { key: 'research.edit', label: 'Modifier et contrôler', group: 'Recherches scolaires' },
+  { key: 'research.generate', label: 'Générer avec assistant', group: 'Recherches scolaires' },
+  { key: 'research.approve', label: 'Approuver le contenu', group: 'Recherches scolaires' },
+  { key: 'research.export', label: 'Exporter les recherches', group: 'Recherches scolaires' },
+  { key: 'research.print', label: 'Imprimer les recherches', group: 'Recherches scolaires' },
+  { key: 'research.manage_settings', label: 'Paramètres des recherches', group: 'Recherches scolaires' },
+  { key: 'research.view_costs', label: 'Voir les coûts AI', group: 'Recherches scolaires' },
   { key: 'clients', label: 'Clients', group: 'Contacts' },
   { key: 'suppliers', label: 'Fournisseurs', group: 'Contacts' },
   { key: 'products', label: 'Produits', group: 'Catalogue' },
@@ -38,6 +48,7 @@ const PERMISSIONS = [
 const permissionLabel = (key) => PERMISSIONS.find(p => p.key === key)?.label || key
 
 export default function UsersPage() {
+  const { translate } = useI18n()
   const confirm = useConfirm()
   const [activeTab, setActiveTab] = useState('users')
   const [users, setUsers] = useState([])
@@ -248,11 +259,11 @@ export default function UsersPage() {
                 {roles.map(role => (
                   <tr key={role.id}>
                     <td><span className="font-semibold">{role.name}</span></td>
-                    <td className="text-sm text-muted">{role.description || '-'}</td>
+                    <td className="text-sm text-muted">{role.description ? translate(role.description) : '-'}</td>
                     <td>
                       <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
                         {(role.permissions?.includes('all') ? ['all'] : role.permissions || []).slice(0, 4).map(permission => (
-                          <span key={permission} className="badge badge-info">{permissionLabel(permission)}</span>
+                          <span key={permission} className="badge badge-info">{translate(permissionLabel(permission))}</span>
                         ))}
                         {(role.permissions?.length || 0) > 4 && <span className="badge badge-draft">+{role.permissions.length - 4}</span>}
                       </div>

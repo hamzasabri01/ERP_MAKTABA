@@ -48,6 +48,31 @@ const WEEK_DAYS = [
   ['7', 'days.sunday'],
 ]
 
+const toLocalIsoDate = date => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getReportDateRange = (periodType, reference = new Date()) => {
+  const start = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate())
+  const end = new Date(start)
+  if (periodType === 'weekly') {
+    const mondayOffset = (start.getDay() + 6) % 7
+    start.setDate(start.getDate() - mondayOffset)
+    end.setTime(start.getTime())
+    end.setDate(start.getDate() + 6)
+  } else if (periodType === 'monthly') {
+    start.setDate(1)
+    end.setFullYear(start.getFullYear(), start.getMonth() + 1, 0)
+  } else if (periodType === 'yearly') {
+    start.setMonth(0, 1)
+    end.setFullYear(start.getFullYear(), 11, 31)
+  }
+  return { start_date: toLocalIsoDate(start), end_date: toLocalIsoDate(end) }
+}
+
 const HELP = {
   full_name: { fr: "Nom affiche dans l'application et sur votre profil.", ar: 'الاسم الذي يظهر داخل التطبيق وفي ملفك الشخصي.' },
   profile_email: { fr: 'Adresse email liee a votre compte utilisateur.', ar: 'البريد الإلكتروني المرتبط بحساب المستخدم.' },
@@ -162,6 +187,9 @@ export default function SettingsPage() {
   const [savingProfile, setSavingProfile] = useState(false)
   const [sendingReport, setSendingReport] = useState(false)
   const [testingEmail, setTestingEmail] = useState(false)
+  const [emailStatus, setEmailStatus] = useState(null)
+  const [smtpPassword, setSmtpPassword] = useState('')
+  const [savingSmtpPassword, setSavingSmtpPassword] = useState(false)
   const [backups, setBackups] = useState({ items: [], database_path: '', backup_dir: '', max_backups: 30 })
   const [loadingBackups, setLoadingBackups] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
@@ -170,11 +198,68 @@ export default function SettingsPage() {
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [systemHealth, setSystemHealth] = useState(null)
   const [loadingSystem, setLoadingSystem] = useState(false)
-  const [reportRequest, setReportRequest] = useState({
+  const [reportRequest, setReportRequest] = useState(() => ({
     period_type: 'daily',
-    start_date: new Date().toISOString().slice(0, 10),
-    end_date: new Date().toISOString().slice(0, 10),
-  })
+    ...getReportDateRange('daily'),
+  }))
+
+  const changeReportPeriod = periodType => {
+    setReportRequest(current => periodType === 'custom'
+      ? { ...current, period_type: periodType }
+      : { period_type: periodType, ...getReportDateRange(periodType) })
+  }
+
+  const validateEmailList = (value, label) => {
+    const entries = String(value || '').split(/[;,]/).map(item => item.trim()).filter(Boolean)
+    const invalid = entries.find(item => !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(item))
+    if (invalid) throw new Error(`${label}: adresse invalide (${invalid})`)
+    return entries
+  }
+
+  const validateEmailConfiguration = (testOnly = false) => {
+    if (!form.smtp_host?.trim()) throw new Error('Le serveur SMTP est obligatoire')
+    if (!form.smtp_from_email?.trim()) throw new Error("L'adresse d'expediteur est obligatoire")
+    validateEmailList(form.smtp_from_email, 'Expediteur')
+    if (/gmail\.com$/i.test(form.smtp_host || '') && !/^[^\s@]+@gmail\.com$/i.test(form.smtp_username || '')) {
+      throw new Error("Pour Gmail, l'utilisateur SMTP doit etre votre adresse Gmail complete")
+    }
+    if (Number(form.smtp_port) === 587 && form.smtp_security !== 'starttls') throw new Error('Le port 587 doit utiliser STARTTLS')
+    if (Number(form.smtp_port) === 465 && form.smtp_security !== 'ssl') throw new Error('Le port 465 doit utiliser SSL/TLS')
+    if (form.report_email_reply_to) validateEmailList(form.report_email_reply_to, 'Reply-To')
+    if (form.report_email_cc) validateEmailList(form.report_email_cc, 'CC')
+    if (form.report_email_bcc) validateEmailList(form.report_email_bcc, 'BCC')
+    const recipients = validateEmailList(form.report_email_recipients, 'Destinataires')
+    if (!testOnly && !recipients.length) throw new Error('Ajoutez au moins un destinataire')
+    if (reportRequest.period_type === 'custom' && (!reportRequest.start_date || !reportRequest.end_date || reportRequest.start_date > reportRequest.end_date)) {
+      throw new Error('La periode personnalisee est invalide')
+    }
+  }
+
+  const loadEmailStatus = async () => {
+    try {
+      const { data } = await api.get('/reports/email/status')
+      setEmailStatus(data)
+    } catch {
+      setEmailStatus(null)
+    }
+  }
+
+  const saveSmtpPassword = async () => {
+    const password = smtpPassword.replace(/\s+/g, '')
+    if (password.length < 8) return toast.error("Saisissez un mot de passe d'application valide")
+    setSavingSmtpPassword(true)
+    try {
+      await api.put('/settings/smtp-password', { password })
+      setSmtpPassword('')
+      setForm(current => ({ ...current, smtp_password_configured: true }))
+      await loadEmailStatus()
+      toast.success('Mot de passe SMTP enregistre en toute securite')
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || 'Enregistrement impossible')
+    } finally {
+      setSavingSmtpPassword(false)
+    }
+  }
 
   const listFromSetting = (key, fallback = []) => String(form[key] || fallback.join(','))
     .split(',')
@@ -359,6 +444,10 @@ export default function SettingsPage() {
     if (activeTab === 'system') loadSystemHealth()
   }, [activeTab])
 
+  useEffect(() => {
+    if (activeTab === 'email') loadEmailStatus()
+  }, [activeTab])
+
   const handleSave = async () => {
     setSaving(true)
     try {
@@ -405,12 +494,14 @@ export default function SettingsPage() {
   const sendTestEmail = async () => {
     setTestingEmail(true)
     try {
+      validateEmailConfiguration(true)
       const { data } = await api.put('/settings', form)
       setForm(data)
       await api.post('/reports/email/test', { recipient: form.report_email_recipients || form.smtp_from_email })
+      await loadEmailStatus()
       toast.success(t('settings.testEmailSent'))
     } catch (e) {
-      toast.error(e.response?.data?.detail || t('settings.testEmailError'))
+      toast.error(e.response?.data?.detail || e.message || t('settings.testEmailError'))
     } finally {
       setTestingEmail(false)
     }
@@ -419,6 +510,7 @@ export default function SettingsPage() {
   const sendReportNow = async () => {
     setSendingReport(true)
     try {
+      validateEmailConfiguration()
       const saved = await api.put('/settings', form)
       setForm(saved.data)
       await api.post('/reports/email/send', {
@@ -431,9 +523,10 @@ export default function SettingsPage() {
         include_expenses: form.report_email_include_expenses,
         include_purchases: form.report_email_include_purchases,
       })
+      await loadEmailStatus()
       toast.success(t('settings.reportSent'))
     } catch (e) {
-      toast.error(e.response?.data?.detail || t('settings.reportError'))
+      toast.error(e.response?.data?.detail || e.message || t('settings.reportError'))
     } finally {
       setSendingReport(false)
     }
@@ -840,7 +933,9 @@ export default function SettingsPage() {
                 <div className="settings-grid">
                   <SettingsCard icon={Mail} title={t('settings.emailContentTitle')} hint={t('settings.emailContentHint')}>
                     <Toggle label={t('settings.enableEmailReports')} help={help('report_email_enabled')} {...FB('report_email_enabled')} />
-                    <Field label={t('settings.primaryRecipients')} help={help('report_email_recipients')}><input {...F('report_email_recipients')} placeholder="admin@exemple.com, finance@exemple.com" /></Field>
+                    <Field label={t('settings.primaryRecipients')} help={help('report_email_recipients')}>
+                      <MultiEmailField value={form.report_email_recipients || ''} onChange={value => setValue('report_email_recipients', value)} language={language} />
+                    </Field>
                     <Field label="CC" help={help('report_email_cc')}><input {...F('report_email_cc')} placeholder="optionnel" /></Field>
                     <Field label="BCC" help={help('report_email_bcc')}><input {...F('report_email_bcc')} placeholder="optionnel" /></Field>
                     <Field label="Reply-To" help={help('report_email_reply_to')}><input {...F('report_email_reply_to')} placeholder="support@exemple.com" /></Field>
@@ -856,16 +951,36 @@ export default function SettingsPage() {
                   </SettingsCard>
 
                   <SettingsCard icon={Settings} title="SMTP" hint={t('settings.smtpHint')}>
+                    <div className={`settings-email-status ${emailStatus?.last_status || 'never'}`}>
+                      <span className="settings-email-status-dot" />
+                      <div>
+                        <strong>{emailStatus?.smtp_ready && emailStatus?.password_configured ? 'Configuration SMTP prete' : 'Configuration SMTP incomplete'}</strong>
+                        <span>
+                          {emailStatus?.last_status === 'success' && `Dernier envoi reussi: ${emailStatus.last_sent_at || '-'}`}
+                          {emailStatus?.last_status === 'error' && (emailStatus.last_error || 'Derniere tentative en echec')}
+                          {(!emailStatus || emailStatus.last_status === 'never') && 'Aucun rapport envoye pour le moment'}
+                        </span>
+                      </div>
+                    </div>
                     <Field label="SMTP host" help={help('smtp_host')}><input {...F('smtp_host')} placeholder="smtp.gmail.com" /></Field>
                     <div className="settings-two">
                       <Field label="Port" help={help('smtp_port')}><input type="number" min="1" {...FN('smtp_port')} /></Field>
-                      <Field label="Securite" help={help('smtp_security')}><select {...F('smtp_security')}><option value="starttls">STARTTLS</option><option value="ssl">SSL/TLS</option><option value="none">Aucune</option></select></Field>
+                      <Field label="Securite" help={help('smtp_security')}><select value={form.smtp_security || 'starttls'} onChange={e => setForm(current => ({ ...current, smtp_security: e.target.value, smtp_port: e.target.value === 'ssl' ? 465 : e.target.value === 'starttls' ? 587 : current.smtp_port }))}><option value="starttls">STARTTLS (port 587)</option><option value="ssl">SSL/TLS (port 465)</option><option value="none">Aucune</option></select></Field>
                     </div>
-                    <Field label={t('settings.smtpUser')} help={help('smtp_username')}><input {...F('smtp_username')} autoComplete="off" /></Field>
+                    <Field label={t('settings.smtpUser')} help={help('smtp_username')}><input {...F('smtp_username')} autoComplete="username" placeholder="votre-adresse@gmail.com" /></Field>
                     <div className="settings-note">
                       <strong>{form.smtp_password_configured ? 'Mot de passe SMTP configure' : 'Mot de passe SMTP non configure'}</strong>
-                      <span>La valeur est protegee cote serveur via la variable SMTP_PASSWORD et n'est jamais renvoyee au navigateur.</span>
+                      <span>Pour Gmail, utilisez un mot de passe d'application Google de 16 caracteres, jamais le mot de passe normal du compte.</span>
                     </div>
+                    <Field label="Mot de passe d'application SMTP" help="Il sera stocke separement des parametres publics et ne sera jamais renvoye au navigateur.">
+                      <div className="settings-smtp-password-row">
+                        <input type="password" value={smtpPassword} onChange={e => setSmtpPassword(e.target.value)} autoComplete="new-password" placeholder={form.smtp_password_configured ? '•••••••••••••••• (remplacer)' : 'Mot de passe application'} />
+                        <button type="button" className="btn btn-secondary" onClick={saveSmtpPassword} disabled={savingSmtpPassword || !smtpPassword.trim()}>
+                          {savingSmtpPassword ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Save size={16} />}
+                          Enregistrer
+                        </button>
+                      </div>
+                    </Field>
                     <Field label={t('settings.fromEmail')} help={help('smtp_from_email')}><input {...F('smtp_from_email')} placeholder="noreply@exemple.com" /></Field>
                     <Field label={t('settings.fromName')} help={help('smtp_from_name')}><input {...F('smtp_from_name')} placeholder="LIBRARY SABRI" /></Field>
                     <Field label={t('settings.timeoutSeconds')} help={help('smtp_timeout_seconds')}><input type="number" min="5" {...FN('smtp_timeout_seconds')} /></Field>
@@ -889,10 +1004,14 @@ export default function SettingsPage() {
                   </SettingsCard>
 
                   <SettingsCard icon={Send} title={t('settings.sendNowTitle')} hint={t('settings.sendNowHint')}>
-                    <Field label={t('settings.period')} help={help('report_period')}><select value={reportRequest.period_type} onChange={e => setReportRequest(r => ({ ...r, period_type: e.target.value }))}><option value="daily">{t('settings.today')}</option><option value="weekly">{t('settings.thisWeek')}</option><option value="monthly">{t('settings.thisMonth')}</option><option value="yearly">{t('settings.thisYear')}</option><option value="custom">{t('settings.custom')}</option></select></Field>
+                    <Field label={t('settings.period')} help={help('report_period')}><select value={reportRequest.period_type} onChange={e => changeReportPeriod(e.target.value)}><option value="daily">{t('settings.today')}</option><option value="weekly">{t('settings.thisWeek')}</option><option value="monthly">{t('settings.thisMonth')}</option><option value="yearly">{t('settings.thisYear')}</option><option value="custom">{t('settings.custom')}</option></select></Field>
                     <div className="settings-two">
-                      <Field label={t('settings.startDate')} help={help('report_start_date')}><input type="date" value={reportRequest.start_date} onChange={e => setReportRequest(r => ({ ...r, start_date: e.target.value }))} disabled={reportRequest.period_type !== 'custom'} /></Field>
-                      <Field label={t('settings.endDate')} help={help('report_end_date')}><input type="date" value={reportRequest.end_date} onChange={e => setReportRequest(r => ({ ...r, end_date: e.target.value }))} disabled={reportRequest.period_type !== 'custom'} /></Field>
+                      <Field label={t('settings.startDate')} help={help('report_start_date')}><input type="date" value={reportRequest.start_date} max={reportRequest.end_date || undefined} onChange={e => setReportRequest(r => ({ ...r, start_date: e.target.value }))} readOnly={reportRequest.period_type !== 'custom'} aria-readonly={reportRequest.period_type !== 'custom'} /></Field>
+                      <Field label={t('settings.endDate')} help={help('report_end_date')}><input type="date" value={reportRequest.end_date} min={reportRequest.start_date || undefined} onChange={e => setReportRequest(r => ({ ...r, end_date: e.target.value }))} readOnly={reportRequest.period_type !== 'custom'} aria-readonly={reportRequest.period_type !== 'custom'} /></Field>
+                    </div>
+                    <div className="settings-report-range" aria-live="polite">
+                      <CalendarDays size={16} />
+                      <span>Periode envoyee : <strong>{new Date(`${reportRequest.start_date}T00:00:00`).toLocaleDateString(language === 'ar' ? 'ar-MA' : 'fr-FR')}</strong> — <strong>{new Date(`${reportRequest.end_date}T00:00:00`).toLocaleDateString(language === 'ar' ? 'ar-MA' : 'fr-FR')}</strong></span>
                     </div>
                     <button className="btn btn-primary" onClick={sendReportNow} disabled={sendingReport || saving}>
                       {sendingReport ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Send size={16} />}
@@ -1092,6 +1211,39 @@ function EditableList({ values, placeholder, onAdd, onRemove }) {
           </span>
         ))}
       </div>
+    </div>
+  )
+}
+
+function MultiEmailField({ value, onChange, language = 'fr' }) {
+  const [draft, setDraft] = useState('')
+  const emails = [...new Set(String(value || '').split(/[;,]/).map(item => item.trim().toLowerCase()).filter(Boolean))]
+  const isValid = email => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(email)
+  const add = raw => {
+    const candidates = String(raw || '').split(/[;,\s]+/).map(item => item.trim().toLowerCase()).filter(Boolean)
+    if (!candidates.length) return
+    const invalid = candidates.find(email => !isValid(email))
+    if (invalid) {
+      toast.error(language === 'ar' ? `بريد إلكتروني غير صالح: ${invalid}` : `Adresse email invalide: ${invalid}`)
+      return
+    }
+    onChange([...new Set([...emails, ...candidates])].join(','))
+    setDraft('')
+  }
+  const remove = email => onChange(emails.filter(item => item !== email).join(','))
+  return (
+    <div className="settings-multi-email">
+      <div className="settings-email-chips">
+        {emails.map(email => <span className="settings-email-chip" key={email}><Mail size={13}/><span>{email}</span><button type="button" onClick={() => remove(email)} title={language === 'ar' ? 'حذف' : 'Supprimer'}><Trash2 size={13}/></button></span>)}
+      </div>
+      <div className="settings-email-entry">
+        <input type="email" value={draft} onChange={event => setDraft(event.target.value)} placeholder={language === 'ar' ? 'أضف بريداً إلكترونياً' : 'Ajouter une adresse email'} onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ',' || event.key === ';') { event.preventDefault(); add(draft) }
+          if (event.key === 'Backspace' && !draft && emails.length) remove(emails.at(-1))
+        }} onBlur={() => draft.trim() && add(draft)} />
+        <button type="button" className="btn btn-secondary btn-sm" onMouseDown={event => event.preventDefault()} onClick={() => add(draft)} disabled={!draft.trim()}><Plus size={14}/>{language === 'ar' ? 'إضافة' : 'Ajouter'}</button>
+      </div>
+      <small className="field-hint">{language === 'ar' ? 'اضغط Enter بعد كل عنوان. سيُرسل التقرير المجدول إلى جميع العناوين.' : 'Appuyez sur Entree apres chaque adresse. Le rapport planifie sera envoye a tous ces destinataires.'}</small>
     </div>
   )
 }

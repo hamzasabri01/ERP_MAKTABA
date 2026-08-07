@@ -1,14 +1,19 @@
 """api/routes/reports.py"""
 from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 import html
 import logging
 import smtplib
 import ssl
 import threading
 import time
+import re
+import calendar
+from io import BytesIO
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 from sqlalchemy import func
 from datetime import date, datetime, timedelta
 from core.database import get_db, SessionLocal
@@ -19,8 +24,12 @@ from models.sales import Sale, SaleItem
 from models.expense import Expense
 from models.purchase import Purchase
 from models.product import Product
+from models.user import User
 from services.document_workflow import ACTIVE_PURCHASE_STATUSES, ACTIVE_SALE_STATUSES
 from services.money import ZERO, quantize_money
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 router = APIRouter()
 _SCHEDULER_STARTED = False
@@ -63,12 +72,14 @@ def _is_schedule_due(settings: dict, now: datetime):
     frequency = settings.get("report_schedule_frequency") or "daily"
     if frequency == "weekly" and now.isoweekday() != int(settings.get("report_schedule_day_of_week") or 1):
         return False
-    if frequency == "monthly" and now.day != int(settings.get("report_schedule_day_of_month") or 1):
+    configured_day = int(settings.get("report_schedule_day_of_month") or 1)
+    effective_day = min(configured_day, calendar.monthrange(now.year, now.month)[1])
+    if frequency == "monthly" and now.day != effective_day:
         return False
     if frequency == "yearly":
         if now.month != int(settings.get("report_schedule_month") or 1):
             return False
-        if now.day != int(settings.get("report_schedule_day_of_month") or 1):
+        if now.day != effective_day:
             return False
 
     last_key = settings.get("report_schedule_last_sent_key") or ""
@@ -80,8 +91,11 @@ def _date_range(period_type: str, start_date: str = None, end_date: str = None):
     if period_type == "custom":
         if not start_date or not end_date:
             raise HTTPException(status_code=400, detail="start_date et end_date sont requis")
-        start = datetime.strptime(start_date, "%Y-%m-%d").date()
-        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Dates invalides. Format attendu: AAAA-MM-JJ") from exc
     elif period_type == "daily":
         start = end = today
     elif period_type == "weekly":
@@ -106,7 +120,22 @@ def _between_dates(column, start: date, end: date):
 
 
 def _csv_emails(value: str):
-    return [email.strip() for email in (value or "").replace(";", ",").split(",") if email.strip()]
+    candidates = [item.strip() for item in (value or "").replace(";", ",").split(",") if item.strip()]
+    result = []
+    seen = set()
+    for candidate in candidates:
+        _, address = parseaddr(candidate)
+        address = address.strip().lower()
+        if not re.fullmatch(r"[^\s@,]+@[^\s@,]+\.[^\s@,]+", address):
+            raise HTTPException(status_code=422, detail=f"Adresse email invalide: {candidate}")
+        if address not in seen:
+            seen.add(address)
+            result.append(address)
+    return result
+
+
+def _safe_header(value: str, fallback: str = "") -> str:
+    return " ".join(str(value or fallback).replace("\x00", "").splitlines()).strip()
 
 
 def _money(value):
@@ -165,6 +194,26 @@ def _sales_by_category_range(db: Session, start: date, end: date):
         *_between_dates(Sale.date_time, start, end),
     ).group_by(Category.name).order_by(func.sum(SaleItem.line_total).desc()).limit(10).all()
     return [{"category": r.category, "total": quantize_money(r.total or 0), "count": r.count} for r in rows]
+
+
+def _sales_by_user_range(db: Session, start: date, end: date):
+    display_name = func.coalesce(func.nullif(User.full_name, ""), func.nullif(User.username, ""), "Utilisateur inconnu")
+    rows = db.query(
+        display_name.label("user_name"),
+        func.count(Sale.id).label("invoice_count"),
+        func.sum(Sale.total_amount).label("revenue"),
+        func.sum(Sale.paid_amount).label("paid"),
+    ).outerjoin(User, User.id == Sale.created_by).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+        *_between_dates(Sale.date_time, start, end),
+    ).group_by(display_name).order_by(func.sum(Sale.total_amount).desc()).all()
+    return [{
+        "user_name": row.user_name or "Utilisateur inconnu",
+        "invoice_count": int(row.invoice_count or 0),
+        "revenue": quantize_money(row.revenue or 0),
+        "paid": quantize_money(row.paid or 0),
+    } for row in rows]
 
 
 def _stock_summary(db: Session):
@@ -390,43 +439,291 @@ def _business_comparisons(db: Session):
 def _render_report_html(settings: dict, req: ReportEmailRequest, start: date, end: date, data: dict):
     company = html.escape(settings.get("name") or settings.get("store_name") or "Maktaba Print")
     currency = html.escape(settings.get("currency") or "MAD")
-    summary_rows = [
-        ("Chiffre d'affaires", data["summary"]["revenue"]),
-        ("Encaisse", data["summary"]["paid"]),
-        ("Reste a encaisser", data["summary"]["unpaid"]),
-    ]
-    if req.include_profit:
-        summary_rows.extend([
-            ("Cout des ventes", data["summary"]["cogs"]),
-            ("Benefice net", data["summary"]["net_profit"]),
-        ])
-    if req.include_expenses:
-        summary_rows.append(("Depenses", data["summary"]["expenses"]))
-    if req.include_purchases:
-        summary_rows.append(("Achats", data["summary"]["purchases"]))
+    summary = data["summary"]
+    trend = data.get("trend", {})
+    generated_at = datetime.now(ZoneInfo(settings.get("report_schedule_timezone") or "Africa/Casablanca"))
 
-    rows = "".join(
-        f"<tr><td>{html.escape(label)}</td><td><strong>{_money(value)} {currency}</strong></td></tr>"
-        for label, value in summary_rows
-    )
+    def kpi(label, value, color, variation=None):
+        variation_html = ""
+        if variation is not None:
+            sign = "+" if variation > 0 else ""
+            trend_color = "#16a34a" if variation >= 0 else "#dc2626"
+            variation_html = f'<div style="margin-top:5px;font-size:12px;color:{trend_color};font-weight:700">{sign}{variation:.1f}% vs periode precedente</div>'
+        return f'''<td width="33.33%" style="padding:6px;vertical-align:top">
+          <div style="border:1px solid #dbe7f5;border-top:4px solid {color};border-radius:12px;padding:14px;background:#ffffff;min-height:82px">
+            <div style="font-size:12px;color:#64748b;margin-bottom:7px">{html.escape(label)}</div>
+            <div style="font-size:20px;color:#102a43;font-weight:800;white-space:nowrap">{_money(value)} {currency}</div>{variation_html}
+          </div></td>'''
+
+    primary_kpis = "".join([
+        kpi("Chiffre d'affaires", summary["revenue"], "#1677ff", trend.get("revenue")),
+        kpi("Encaisse", summary["paid"], "#16a34a", trend.get("paid")),
+        kpi("Reste a encaisser", summary["unpaid"], "#f59e0b"),
+    ])
+    secondary_kpis = []
+    if req.include_profit:
+        secondary_kpis.append(kpi("Benefice net", summary["net_profit"], "#16a34a" if summary["net_profit"] >= 0 else "#dc2626", trend.get("net_profit")))
+    if req.include_expenses:
+        secondary_kpis.append(kpi("Depenses", summary["expenses"], "#ef4444", trend.get("expenses")))
+    if req.include_purchases:
+        secondary_kpis.append(kpi("Achats", summary["purchases"], "#8b5cf6", trend.get("purchases")))
+
     categories = "".join(
-        f"<tr><td>{html.escape(r['category'])}</td><td>{r['count']}</td><td>{_money(r['total'])} {currency}</td></tr>"
+        f"<tr><td style='padding:10px;border-bottom:1px solid #e5edf6'>{html.escape(r['category'])}</td><td align='center' style='padding:10px;border-bottom:1px solid #e5edf6'>{r['count']}</td><td align='right' style='padding:10px;border-bottom:1px solid #e5edf6;font-weight:700'>{_money(r['total'])} {currency}</td></tr>"
         for r in data.get("categories", [])
-    ) or "<tr><td colspan='3'>Aucune vente par categorie</td></tr>"
-    return f"""<!doctype html>
-<html><body style="font-family:Arial,sans-serif;color:#111827">
-<h2>{html.escape(settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print')}</h2>
-<p><strong>{company}</strong><br>Periode: {start.isoformat()} au {end.isoformat()}</p>
-<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #d1d5db">{rows}</table>
-{f"<p>Marge brute: <strong>{data['summary']['margin_pct']}%</strong> | Ventes: <strong>{data['summary']['sale_count']}</strong> | Achats: <strong>{data['summary']['purchase_count']}</strong></p>" if req.include_profit else ""}
-{f"<h3>Ventes par categorie</h3>" if req.include_sales_by_category else ""}
-{f'''
-<table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #d1d5db">
-<tr><th align="left">Categorie</th><th align="left">Lignes</th><th align="left">CA</th></tr>{categories}</table>
-''' if req.include_sales_by_category else ""}
-{f"<h3>Stock</h3><p>Valeur stock: <strong>{_money(data['stock']['total_value'])} {currency}</strong> | Produits: <strong>{data['stock']['products_count']}</strong> | Stock faible: <strong>{data['stock']['low_stock_count']}</strong></p>" if req.include_stock_value else ""}
-{f"<h3>Caisse</h3><p>Entrees: <strong>{_money(data['cash']['cash_in'])} {currency}</strong> | Sorties: <strong>{_money(data['cash']['cash_out'])} {currency}</strong> | Net: <strong>{_money(data['cash']['net_cash'])} {currency}</strong></p>" if req.include_cash else ""}
-</body></html>"""
+    ) or "<tr><td colspan='3' style='padding:14px;color:#64748b;text-align:center'>Aucune vente sur cette periode</td></tr>"
+    top_items = "".join(
+        f"<tr><td style='padding:10px;border-bottom:1px solid #e5edf6'>{html.escape(str(item['name']))}<div style='font-size:11px;color:#64748b'>{'Service' if item['product_type'] == 'service' else 'Produit'}</div></td><td align='center' style='padding:10px;border-bottom:1px solid #e5edf6'>{item['quantity']:g}</td><td align='right' style='padding:10px;border-bottom:1px solid #e5edf6;font-weight:700'>{_money(item['revenue'])} {currency}</td></tr>"
+        for item in data.get("top_items", [])[:8]
+    ) or "<tr><td colspan='3' style='padding:14px;color:#64748b;text-align:center'>Aucun article vendu</td></tr>"
+    users = "".join(
+        f"<tr><td style='padding:10px;border-bottom:1px solid #e5edf6;font-weight:700'>{html.escape(str(row['user_name']))}</td><td align='center' style='padding:10px;border-bottom:1px solid #e5edf6'>{row['invoice_count']}</td><td align='right' style='padding:10px;border-bottom:1px solid #e5edf6'>{_money(row['paid'])} {currency}</td><td align='right' style='padding:10px;border-bottom:1px solid #e5edf6;font-weight:700'>{_money(row['revenue'])} {currency}</td></tr>"
+        for row in data.get("users", [])
+    ) or "<tr><td colspan='4' style='padding:14px;color:#64748b;text-align:center'>Aucune facture utilisateur</td></tr>"
+    section_title = "font-size:18px;color:#102a43;margin:26px 0 10px;font-weight:800"
+    table_header = "padding:10px;background:#1677ff;color:#ffffff;font-size:12px;text-transform:uppercase"
+    return f"""<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f7fc;font-family:Arial,Helvetica,sans-serif;color:#102a43">
+<div style="display:none;max-height:0;overflow:hidden">Rapport du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')} - CA {_money(summary['revenue'])} {currency}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7fc"><tr><td align="center" style="padding:22px 10px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:720px;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #dbe7f5">
+<tr><td style="padding:25px 28px;background:linear-gradient(135deg,#0b5ed7,#1677ff);color:#ffffff">
+  <div style="font-size:13px;opacity:.88;letter-spacing:.7px">RAPPORT DE GESTION</div>
+  <div style="font-size:26px;font-weight:800;margin-top:6px">{company}</div>
+  <div style="font-size:14px;margin-top:8px;opacity:.92">Du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}</div>
+</td></tr>
+<tr><td style="padding:22px 20px 8px">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>{primary_kpis}</tr></table>
+  {f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>{"".join(secondary_kpis)}</tr></table>' if secondary_kpis else ''}
+  <div style="margin:12px 6px 0;padding:13px 15px;border-radius:10px;background:#eff6ff;color:#334e68;font-size:13px">
+    <strong>{summary['sale_count']}</strong> ventes &nbsp;•&nbsp; Marge brute <strong>{summary['margin_pct']:.2f}%</strong> &nbsp;•&nbsp; <strong>{summary['purchase_count']}</strong> achats
+  </div>
+  {f'''<div style="{section_title}">Ventes par categorie</div><table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f5;border-radius:10px;overflow:hidden"><tr><th align="left" style="{table_header}">Categorie</th><th style="{table_header}">Lignes</th><th align="right" style="{table_header}">Chiffre d'affaires</th></tr>{categories}</table>''' if req.include_sales_by_category else ''}
+  <div style="{section_title}">Meilleures ventes</div><table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f5;border-radius:10px;overflow:hidden"><tr><th align="left" style="{table_header}">Article</th><th style="{table_header}">Quantite</th><th align="right" style="{table_header}">CA</th></tr>{top_items}</table>
+  <div style="{section_title}">Performance par utilisateur</div><table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f5;border-radius:10px;overflow:hidden"><tr><th align="left" style="{table_header}">Utilisateur</th><th style="{table_header}">Factures</th><th align="right" style="{table_header}">Encaisse</th><th align="right" style="{table_header}">CA</th></tr>{users}</table>
+  {f'''<div style="{section_title}">Stock</div><table width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:14px;background:#f8fafc;border-radius:10px">Valeur du stock<br><strong style="font-size:18px">{_money(data['stock']['total_value'])} {currency}</strong></td><td width="10"></td><td style="padding:14px;background:{'#fff7ed' if data['stock']['low_stock_count'] else '#f0fdf4'};border-radius:10px">Stock faible<br><strong style="font-size:18px;color:{'#ea580c' if data['stock']['low_stock_count'] else '#16a34a'}">{data['stock']['low_stock_count']} produit(s)</strong></td></tr></table>''' if req.include_stock_value else ''}
+  {f'''<div style="{section_title}">Caisse</div><table width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;border-radius:10px"><tr><td style="padding:14px">Entrees<br><strong style="color:#16a34a">{_money(data['cash']['cash_in'])} {currency}</strong></td><td style="padding:14px">Sorties<br><strong style="color:#dc2626">{_money(data['cash']['cash_out'])} {currency}</strong></td><td style="padding:14px">Solde net<br><strong>{_money(data['cash']['net_cash'])} {currency}</strong></td></tr></table>''' if req.include_cash else ''}
+</td></tr>
+<tr><td style="padding:20px 28px;text-align:center;color:#7b8fa3;font-size:11px;border-top:1px solid #e5edf6">Rapport genere le {generated_at.strftime('%d/%m/%Y a %H:%M')} • {company}</td></tr>
+</table></td></tr></table></body></html>"""
+
+
+def _render_report_text(settings: dict, start: date, end: date, data: dict) -> str:
+    summary = data["summary"]
+    currency = settings.get("currency") or "MAD"
+    return "\n".join([
+        str(settings.get("name") or settings.get("store_name") or "Maktaba Print"),
+        f"Rapport du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}",
+        "",
+        f"Chiffre d'affaires: {_money(summary['revenue'])} {currency}",
+        f"Encaisse: {_money(summary['paid'])} {currency}",
+        f"Reste a encaisser: {_money(summary['unpaid'])} {currency}",
+        f"Benefice net: {_money(summary['net_profit'])} {currency}",
+        f"Ventes: {summary['sale_count']}",
+    ])
+
+
+def _build_email_report_data(db: Session, start: date, end: date, req: ReportEmailRequest) -> dict:
+    previous_start, previous_end = _period_comparison_range(start, end)
+    summary = _build_summary(db, start, end)
+    previous = _build_summary(db, previous_start, previous_end)
+    return {
+        "summary": summary,
+        "previous": previous,
+        "trend": {key: _variation(summary[key], previous[key]) for key in ("revenue", "paid", "expenses", "purchases", "net_profit")},
+        "categories": _sales_by_category_range(db, start, end) if req.include_sales_by_category else [],
+        "top_items": _top_items(db, start, end, limit=8),
+        "users": _sales_by_user_range(db, start, end),
+        "stock": _stock_summary(db) if req.include_stock_value else {"total_value": 0, "products_count": 0, "low_stock_count": 0},
+        "cash": _cash_summary(db, start, end) if req.include_cash else {"cash_in": 0, "cash_out": 0, "net_cash": 0},
+    }
+
+
+def _safe_sheet_title(value: str, used: set[str]) -> str:
+    base = re.sub(r"[\\/*?:\[\]]", "-", str(value or "Facture")).strip() or "Facture"
+    base = base[:31]
+    candidate = base
+    suffix = 2
+    while candidate.lower() in used:
+        marker = f"-{suffix}"
+        candidate = f"{base[:31-len(marker)]}{marker}"
+        suffix += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def _build_invoices_workbook(db: Session, settings: dict, start: date, end: date, data: dict) -> tuple[bytes, str]:
+    invoices = db.query(Sale).options(
+        selectinload(Sale.client),
+        selectinload(Sale.creator),
+        selectinload(Sale.items).selectinload(SaleItem.product),
+    ).filter(
+        Sale.doc_type == "invoice",
+        Sale.status.in_(ACTIVE_SALE_STATUSES),
+        *_between_dates(Sale.date_time, start, end),
+    ).order_by(Sale.date_time, Sale.id).all()
+
+    workbook = Workbook()
+    summary_sheet = workbook.active
+    summary_sheet.title = "Resume"
+    blue = "1677FF"
+    navy = "102A43"
+    pale_blue = "EAF3FF"
+    pale_gray = "F4F7FA"
+    white = "FFFFFF"
+    green = "16A34A"
+    red = "DC2626"
+    thin = Side(style="thin", color="D9E4EF")
+    currency = str(settings.get("currency") or "MAD")
+
+    summary_sheet.merge_cells("A1:F1")
+    summary_sheet["A1"] = str(settings.get("name") or settings.get("store_name") or "LIBRARY SABRI")
+    summary_sheet["A1"].font = Font(size=18, bold=True, color=white)
+    summary_sheet["A1"].fill = PatternFill("solid", fgColor=blue)
+    summary_sheet["A1"].alignment = Alignment(horizontal="center")
+    summary_sheet.row_dimensions[1].height = 30
+    summary_sheet.merge_cells("A2:F2")
+    summary_sheet["A2"] = f"Rapport des factures du {start.strftime('%d/%m/%Y')} au {end.strftime('%d/%m/%Y')}"
+    summary_sheet["A2"].font = Font(bold=True, color=navy)
+    summary_sheet["A2"].alignment = Alignment(horizontal="center")
+    summary_sheet.append([])
+    summary_sheet.append(["Indicateur", "Valeur"])
+    metrics = [
+        ("Nombre de factures", len(invoices)),
+        ("Chiffre d'affaires", float(data["summary"]["revenue"])),
+        ("Montant encaisse", float(data["summary"]["paid"])),
+        ("Reste a encaisser", float(data["summary"]["unpaid"])),
+        ("Benefice net", float(data["summary"]["net_profit"])),
+    ]
+    for label, value in metrics:
+        summary_sheet.append([label, value])
+    for cell in summary_sheet[4]:
+        cell.fill = PatternFill("solid", fgColor=navy)
+        cell.font = Font(bold=True, color=white)
+    for row in range(6, 10):
+        summary_sheet.cell(row, 2).number_format = f'#,##0.00 "{currency}"'
+
+    users_sheet = workbook.create_sheet("Utilisateurs")
+    users_sheet.append(["Utilisateur", "Nombre de factures", "Chiffre d'affaires", "Montant encaisse", "Reste"])
+    for cell in users_sheet[1]:
+        cell.fill = PatternFill("solid", fgColor=blue)
+        cell.font = Font(bold=True, color=white)
+        cell.alignment = Alignment(horizontal="center")
+    for user_row in data.get("users", []):
+        users_sheet.append([
+            user_row["user_name"], user_row["invoice_count"], float(user_row["revenue"]),
+            float(user_row["paid"]), float(user_row["revenue"] - user_row["paid"]),
+        ])
+    for row in range(2, users_sheet.max_row + 1):
+        for column in (3, 4, 5):
+            users_sheet.cell(row, column).number_format = f'#,##0.00 "{currency}"'
+    users_sheet.freeze_panes = "A2"
+    users_sheet.auto_filter.ref = f"A1:E{max(1, users_sheet.max_row)}"
+    for column, width in enumerate([30, 20, 22, 22, 18], 1):
+        users_sheet.column_dimensions[get_column_letter(column)].width = width
+
+    index_sheet = workbook.create_sheet("Index factures")
+    headers = ["N° facture", "Date", "Client", "Utilisateur", "Statut", "Paiement", "Total", "Paye", "Reste", "Feuille"]
+    index_sheet.append(headers)
+    for cell in index_sheet[1]:
+        cell.fill = PatternFill("solid", fgColor=blue)
+        cell.font = Font(bold=True, color=white)
+        cell.alignment = Alignment(horizontal="center")
+
+    used_titles = {"resume", "utilisateurs", "index factures"}
+    for invoice in invoices:
+        title = _safe_sheet_title(invoice.number or f"Facture-{invoice.id}", used_titles)
+        client_name = invoice.client.name if invoice.client else "Client comptoir"
+        creator_name = (invoice.creator.full_name or invoice.creator.username) if invoice.creator else "Utilisateur inconnu"
+        balance = max(float(invoice.total_amount or 0) - float(invoice.paid_amount or 0), 0)
+        index_sheet.append([
+            invoice.number or f"#{invoice.id}", invoice.date_time, client_name, creator_name, invoice.status,
+            invoice.payment_mode or "", float(invoice.total_amount or 0), float(invoice.paid_amount or 0), balance, title,
+        ])
+        invoice_sheet = workbook.create_sheet(title)
+        invoice_sheet.sheet_view.showGridLines = False
+        invoice_sheet.merge_cells("A1:F1")
+        invoice_sheet["A1"] = f"FACTURE {invoice.number or invoice.id}"
+        invoice_sheet["A1"].fill = PatternFill("solid", fgColor=blue)
+        invoice_sheet["A1"].font = Font(size=17, bold=True, color=white)
+        invoice_sheet["A1"].alignment = Alignment(horizontal="center")
+        invoice_sheet.row_dimensions[1].height = 29
+        invoice_sheet["A3"] = "Client"
+        invoice_sheet["B3"] = client_name
+        invoice_sheet["D3"] = "Date"
+        invoice_sheet["E3"] = invoice.date_time
+        invoice_sheet["A4"] = "Mode paiement"
+        invoice_sheet["B4"] = invoice.payment_mode or ""
+        invoice_sheet["D4"] = "Utilisateur"
+        invoice_sheet["E4"] = creator_name
+        invoice_sheet["A5"] = "Statut"
+        invoice_sheet["B5"] = invoice.status
+        for coordinate in ("A3", "D3", "A4", "D4", "A5"):
+            invoice_sheet[coordinate].font = Font(bold=True, color=navy)
+
+        row = 6
+        line_headers = ["Designation", "Quantite", "Prix unitaire", "Remise %", "TVA %", "Total"]
+        for column, label in enumerate(line_headers, 1):
+            cell = invoice_sheet.cell(row, column, label)
+            cell.fill = PatternFill("solid", fgColor=navy)
+            cell.font = Font(bold=True, color=white)
+            cell.alignment = Alignment(horizontal="center")
+        for item in invoice.items:
+            row += 1
+            invoice_sheet.append([
+                item.description or (item.product.name if item.product else "Article"),
+                float(item.quantity or 0), float(item.unit_price or 0), float(item.discount or 0),
+                float(item.tax_rate or 0), float(item.total_amount or item.line_total or 0),
+            ])
+            invoice_sheet.cell(row, 2).number_format = "0.####"
+            for column in (3, 6):
+                invoice_sheet.cell(row, column).number_format = f'#,##0.00 "{currency}"'
+            for column in (4, 5):
+                invoice_sheet.cell(row, column).number_format = '0.00"%"'
+        row += 2
+        totals = [
+            ("Sous-total", invoice.subtotal), ("Remise", invoice.discount_amount),
+            ("TVA", invoice.tax_amount), ("TOTAL", invoice.total_amount),
+            ("Paye", invoice.paid_amount), ("Reste", balance),
+        ]
+        for label, value in totals:
+            invoice_sheet.cell(row, 5, label)
+            invoice_sheet.cell(row, 6, float(value or 0))
+            invoice_sheet.cell(row, 5).font = Font(bold=True, color=navy)
+            invoice_sheet.cell(row, 6).font = Font(bold=True, color=green if label == "Paye" else red if label == "Reste" and float(value or 0) > 0 else navy)
+            invoice_sheet.cell(row, 6).number_format = f'#,##0.00 "{currency}"'
+            row += 1
+        invoice_sheet.freeze_panes = "A7"
+        invoice_sheet.auto_filter.ref = f"A6:F{max(6, row - 8)}"
+        widths = [42, 12, 17, 13, 11, 18]
+        for column, width in enumerate(widths, 1):
+            invoice_sheet.column_dimensions[get_column_letter(column)].width = width
+        for cells in invoice_sheet.iter_rows(min_row=3, max_row=row - 1, min_col=1, max_col=6):
+            for cell in cells:
+                cell.border = Border(bottom=thin)
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for row in range(2, index_sheet.max_row + 1):
+        index_sheet.cell(row, 2).number_format = "dd/mm/yyyy hh:mm"
+        for column in (7, 8, 9):
+            index_sheet.cell(row, column).number_format = f'#,##0.00 "{currency}"'
+        sheet_cell = index_sheet.cell(row, 10)
+        sheet_cell.hyperlink = f"#'{sheet_cell.value}'!A1"
+        sheet_cell.style = "Hyperlink"
+        if row % 2 == 0:
+            for cell in index_sheet[row]:
+                cell.fill = PatternFill("solid", fgColor=pale_gray)
+    index_sheet.freeze_panes = "A2"
+    index_sheet.auto_filter.ref = f"A1:J{max(1, index_sheet.max_row)}"
+    for column, width in enumerate([18, 18, 28, 25, 18, 18, 16, 16, 16, 20], 1):
+        index_sheet.column_dimensions[get_column_letter(column)].width = width
+    summary_sheet.column_dimensions["A"].width = 30
+    summary_sheet.column_dimensions["B"].width = 22
+
+    stream = BytesIO()
+    workbook.save(stream)
+    filename = f"factures-{start.isoformat()}-{end.isoformat()}.xlsx"
+    return stream.getvalue(), filename
 
 
 def _send_report_from_settings(db: Session, settings: dict, period_type: str = None):
@@ -441,16 +738,12 @@ def _send_report_from_settings(db: Session, settings: dict, period_type: str = N
         include_purchases=bool(settings.get("report_email_include_purchases", True)),
     )
     start, end = _date_range(req.period_type)
-    data = {
-        "summary": _build_summary(db, start, end),
-        "categories": _sales_by_category_range(db, start, end) if req.include_sales_by_category else [],
-        "stock": _stock_summary(db) if req.include_stock_value else {"total_value": 0, "products_count": 0, "low_stock_count": 0},
-        "cash": _cash_summary(db, start, end) if req.include_cash else {"cash_in": 0, "cash_out": 0, "net_cash": 0},
-    }
+    data = _build_email_report_data(db, start, end, req)
     recipients = _csv_emails(req.recipients)
     subject = f"{settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print'} - {start.isoformat()} / {end.isoformat()}"
     html_body = _render_report_html(settings, req, start, end, data)
-    _send_email(settings, recipients, subject, html_body)
+    excel_bytes, excel_name = _build_invoices_workbook(db, settings, start, end, data)
+    _send_email(settings, recipients, subject, html_body, _render_report_text(settings, start, end, data), [(excel_name, excel_bytes)])
     return {"recipients": recipients, "start": start, "end": end, "subject": subject}
 
 
@@ -466,11 +759,19 @@ def _scheduler_loop():
                     _send_report_from_settings(db, settings)
                     settings["report_schedule_last_sent_at"] = now.isoformat()
                     settings["report_schedule_last_sent_key"] = _period_key(settings.get("report_schedule_frequency") or "daily", now, settings)
+                    settings["report_schedule_last_status"] = "success"
+                    settings["report_schedule_last_error"] = ""
                     _save_settings(settings)
+                except Exception as exc:
+                    settings["report_schedule_last_status"] = "error"
+                    settings["report_schedule_last_error"] = _smtp_error_message(exc)
+                    settings["report_schedule_last_attempt_at"] = now.isoformat()
+                    _save_settings(settings)
+                    logger.exception("Scheduled report email failed")
                 finally:
                     db.close()
         except Exception:
-            pass
+            logger.exception("Report email scheduler iteration failed")
         time.sleep(60)
 
 
@@ -483,30 +784,58 @@ def start_report_email_scheduler():
     thread.start()
 
 
-def _send_email(settings: dict, to_emails: list[str], subject: str, html_body: str, text_body: str = ""):
+def _send_email(settings: dict, to_emails: list[str], subject: str, html_body: str, text_body: str = "", attachments: list[tuple[str, bytes]] | None = None):
     if not settings.get("smtp_host") or not settings.get("smtp_from_email"):
         raise HTTPException(status_code=400, detail="Configuration SMTP incomplete")
     if not to_emails:
         raise HTTPException(status_code=400, detail="Aucun destinataire configure")
 
+    from_email = _csv_emails(settings.get("smtp_from_email", ""))
+    if len(from_email) != 1:
+        raise HTTPException(status_code=422, detail="Adresse d'expediteur SMTP invalide")
+    smtp_username = _csv_emails(settings.get("smtp_username", "")) if "@" in str(settings.get("smtp_username", "")) else []
+    if str(settings.get("smtp_host", "")).lower() == "smtp.gmail.com" and smtp_username:
+        # Gmail signs the authenticated account. Keeping From aligned avoids
+        # spoofing signals and improves SPF/DKIM/DMARC deliverability.
+        from_email = [smtp_username[0]]
     msg = EmailMessage()
-    from_name = settings.get("smtp_from_name") or settings.get("name") or "Maktaba Print"
-    msg["From"] = f"{from_name} <{settings.get('smtp_from_email')}>"
-    msg["To"] = ", ".join(to_emails)
+    from_name = _safe_header(settings.get("smtp_from_name") or settings.get("name"), "Maktaba Print")
+    msg["From"] = formataddr((from_name, from_email[0]))
+    msg["To"] = ", ".join(_csv_emails(",".join(to_emails)))
     cc = _csv_emails(settings.get("report_email_cc", ""))
     bcc = _csv_emails(settings.get("report_email_bcc", ""))
     if cc:
         msg["Cc"] = ", ".join(cc)
     if settings.get("report_email_reply_to"):
-        msg["Reply-To"] = settings["report_email_reply_to"]
-    msg["Subject"] = subject
-    msg.set_content(text_body or "Rapport Maktaba Print en HTML.")
+        reply_to = _csv_emails(settings["report_email_reply_to"])
+        if len(reply_to) != 1:
+            raise HTTPException(status_code=422, detail="Adresse Reply-To invalide")
+        msg["Reply-To"] = reply_to[0]
+    msg["Subject"] = _safe_header(subject, "Rapport Maktaba Print")
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=from_email[0].split("@", 1)[1])
+    msg["Auto-Submitted"] = "auto-generated"
+    msg["X-Auto-Response-Suppress"] = "All"
+    msg.set_content(text_body or "Votre rapport Maktaba Print est disponible dans la version HTML de cet email.")
     msg.add_alternative(html_body, subtype="html")
+    for filename, content in attachments or []:
+        msg.add_attachment(
+            content,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=_safe_header(filename, "factures.xlsx"),
+        )
 
     timeout = int(settings.get("smtp_timeout_seconds") or 30)
     port = int(settings.get("smtp_port") or 587)
     security = settings.get("smtp_security") or "starttls"
-    recipients = to_emails + cc + bcc
+    if security == "ssl" and port == 587:
+        raise HTTPException(status_code=400, detail="Le port 587 exige STARTTLS. Utilisez STARTTLS ou le port 465 avec SSL/TLS.")
+    if security == "starttls" and port == 465:
+        raise HTTPException(status_code=400, detail="Le port 465 exige SSL/TLS. Utilisez SSL/TLS ou le port 587 avec STARTTLS.")
+    if settings.get("smtp_username") and not settings.get("smtp_password"):
+        raise HTTPException(status_code=400, detail="Mot de passe SMTP non configure. Enregistrez un mot de passe d'application.")
+    recipients = list(dict.fromkeys(_csv_emails(",".join(to_emails + cc + bcc))))
 
     try:
         if security == "ssl":
@@ -516,14 +845,46 @@ def _send_email(settings: dict, to_emails: list[str], subject: str, html_body: s
                 server.send_message(msg, to_addrs=recipients)
         else:
             with smtplib.SMTP(settings["smtp_host"], port, timeout=timeout) as server:
+                server.ehlo()
                 if security == "starttls":
                     server.starttls(context=ssl.create_default_context())
+                    server.ehlo()
                 if settings.get("smtp_username"):
                     server.login(settings["smtp_username"], settings.get("smtp_password", ""))
                 server.send_message(msg, to_addrs=recipients)
     except Exception as exc:
         logger.warning("SMTP delivery failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=400, detail="Echec envoi email. Verifiez la configuration SMTP et les journaux serveur")
+        raise HTTPException(status_code=502, detail=_smtp_error_message(exc))
+
+
+def _smtp_error_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "Authentification SMTP refusee. Verifiez l'identifiant et le mot de passe d'application."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "Le serveur SMTP a refuse un ou plusieurs destinataires."
+    if isinstance(exc, (TimeoutError, smtplib.SMTPServerDisconnected)):
+        return "Le serveur SMTP ne repond pas. Verifiez l'hote, le port et le mode de securite."
+    if isinstance(exc, ssl.SSLError):
+        return "Connexion TLS/SSL impossible. Verifiez le port et le mode de securite SMTP."
+    return "Echec de l'envoi. Verifiez la configuration SMTP et la connexion internet."
+
+
+@router.get("/email/status")
+def report_email_status(user=Depends(get_current_user)):
+    settings = _load_settings()
+    recipients = _csv_emails(settings.get("report_email_recipients", "")) if settings.get("report_email_recipients") else []
+    return {
+        "enabled": bool(settings.get("report_email_enabled")),
+        "smtp_ready": bool(settings.get("smtp_host") and settings.get("smtp_from_email")),
+        "password_configured": bool(settings.get("smtp_password")),
+        "recipient_count": len(recipients),
+        "last_sent_at": settings.get("report_schedule_last_sent_at", ""),
+        "last_attempt_at": settings.get("report_schedule_last_attempt_at", ""),
+        "last_status": settings.get("report_schedule_last_status", "never"),
+        "last_error": settings.get("report_schedule_last_error", ""),
+    }
 
 @router.get("/profit")
 def profit_report(period: str = "month", db: Session = Depends(get_db), user=Depends(get_current_user)):
@@ -604,6 +965,7 @@ def reports_overview(
         "cash": cash,
         "stock": stock,
         "categories": categories,
+        "users": _sales_by_user_range(db, start, end),
         "timeseries": timeseries,
         "top_items": _top_items(db, start, end),
         "dormant_products": _dormant_products(db),
@@ -659,17 +1021,17 @@ def send_report_email(body: ReportEmailRequest, db: Session = Depends(get_db), u
     start, end = _date_range(body.period_type, body.start_date, body.end_date)
     recipients = _csv_emails(body.recipients) or _csv_emails(settings.get("report_email_recipients", ""))
 
-    data = {
-        "summary": _build_summary(db, start, end),
-        "categories": _sales_by_category_range(db, start, end) if body.include_sales_by_category else [],
-        "stock": _stock_summary(db) if body.include_stock_value else {"total_value": 0, "products_count": 0, "low_stock_count": 0},
-        "cash": _cash_summary(db, start, end) if body.include_cash else {"cash_in": 0, "cash_out": 0, "net_cash": 0},
-    }
+    data = _build_email_report_data(db, start, end, body)
     subject = body.subject or f"{settings.get('report_email_subject_prefix') or 'Rapport Maktaba Print'} - {start.isoformat()} / {end.isoformat()}"
     html_body = _render_report_html(settings, body, start, end, data)
-    _send_email(settings, recipients, subject, html_body)
+    excel_bytes, excel_name = _build_invoices_workbook(db, settings, start, end, data)
+    _send_email(settings, recipients, subject, html_body, _render_report_text(settings, start, end, data), [(excel_name, excel_bytes)])
 
-    settings["report_schedule_last_sent_at"] = datetime.utcnow().isoformat()
+    now = datetime.now(ZoneInfo(settings.get("report_schedule_timezone") or "Africa/Casablanca"))
+    settings["report_schedule_last_sent_at"] = now.isoformat()
+    settings["report_schedule_last_attempt_at"] = now.isoformat()
+    settings["report_schedule_last_status"] = "success"
+    settings["report_schedule_last_error"] = ""
     _save_settings(settings)
     return {"ok": True, "recipients": recipients, "period": {"start": start.isoformat(), "end": end.isoformat()}, "subject": subject}
 

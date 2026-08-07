@@ -333,6 +333,66 @@ class ProductCreate(BaseModel):
     pricing_mode: str = "fixed"
     is_active: int = 1
 
+    @field_validator("name")
+    @classmethod
+    def validate_product_name(cls, value):
+        if value is None:
+            return value
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("Le nom du produit est obligatoire")
+        if len(normalized) > 200:
+            raise ValueError("Le nom du produit ne peut pas dépasser 200 caractères")
+        return normalized
+
+    @field_validator("barcode")
+    @classmethod
+    def validate_product_barcode(cls, value: str) -> str:
+        normalized = re.sub(r"\s+", "", str(value or ""))
+        if len(normalized) > 100:
+            raise ValueError("Le code EAN ne peut pas dépasser 100 caractères")
+        if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+            raise ValueError("Le code EAN contient des caractères invalides")
+        return normalized
+
+    @field_validator("unit", "purchase_unit")
+    @classmethod
+    def validate_product_unit(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("L'unité est obligatoire")
+        if len(normalized) > 20:
+            raise ValueError("L'unité ne peut pas dépasser 20 caractères")
+        return normalized
+
+    @field_validator("purchase_to_base_factor")
+    @classmethod
+    def validate_purchase_unit_content(cls, value: Decimal) -> Decimal:
+        if value != value.to_integral_value():
+            raise ValueError("Le contenu de l'unité d'achat doit être un nombre entier")
+        return value
+
+    @field_validator("stock_quantity", "min_stock")
+    @classmethod
+    def validate_product_stock_integer(cls, value: Decimal) -> Decimal:
+        if value != value.to_integral_value():
+            raise ValueError("Les quantités de stock doivent être des nombres entiers")
+        return value
+
+    @field_validator("category_id", "supplier_id")
+    @classmethod
+    def validate_optional_identifier(cls, value):
+        if value is not None and value <= 0:
+            raise ValueError("Identifiant de référence invalide")
+        return value
+
+    @field_validator("tva_enabled", "is_active")
+    @classmethod
+    def validate_product_flag(cls, value: int) -> int:
+        if value not in {0, 1}:
+            raise ValueError("La valeur doit être 0 ou 1")
+        return value
+
     @field_validator("product_type")
     @classmethod
     def validate_product_type(cls, value: str) -> str:
@@ -1033,6 +1093,76 @@ class CompanySettings(BaseModel):
     cash_difference_approval_threshold: float = Field(default=100.0, ge=0)
     expense_categories: str = "Loyer,Salaires,Fournitures,Transport,Marketing,Maintenance,Taxes & Impots,Energie,Communication,Autre"
 
+    @field_validator("smtp_port")
+    @classmethod
+    def validate_smtp_port(cls, value: int) -> int:
+        if value < 1 or value > 65535:
+            raise ValueError("Le port SMTP doit etre compris entre 1 et 65535")
+        return value
+
+    @field_validator("smtp_timeout_seconds")
+    @classmethod
+    def validate_smtp_timeout(cls, value: int) -> int:
+        if value < 5 or value > 120:
+            raise ValueError("Le delai SMTP doit etre compris entre 5 et 120 secondes")
+        return value
+
+    @field_validator("smtp_security")
+    @classmethod
+    def validate_smtp_security(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"starttls", "ssl", "none"}:
+            raise ValueError("Mode de securite SMTP invalide")
+        return normalized
+
+    @field_validator("report_schedule_frequency")
+    @classmethod
+    def validate_report_frequency(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"daily", "weekly", "monthly", "yearly"}:
+            raise ValueError("Frequence de rapport invalide")
+        return normalized
+
+    @field_validator("report_schedule_time")
+    @classmethod
+    def validate_report_time(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", normalized):
+            raise ValueError("L'heure d'envoi doit etre au format HH:MM")
+        return normalized
+
+    @field_validator("report_schedule_day_of_week")
+    @classmethod
+    def validate_report_weekday(cls, value: int) -> int:
+        if value < 1 or value > 7:
+            raise ValueError("Le jour de semaine doit etre compris entre 1 et 7")
+        return value
+
+    @field_validator("report_schedule_day_of_month")
+    @classmethod
+    def validate_report_monthday(cls, value: int) -> int:
+        if value < 1 or value > 31:
+            raise ValueError("Le jour du mois doit etre compris entre 1 et 31")
+        return value
+
+    @field_validator("report_schedule_month")
+    @classmethod
+    def validate_report_month(cls, value: int) -> int:
+        if value < 1 or value > 12:
+            raise ValueError("Le mois doit etre compris entre 1 et 12")
+        return value
+
+    @field_validator("report_schedule_timezone")
+    @classmethod
+    def validate_report_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        normalized = str(value or "").strip()
+        try:
+            ZoneInfo(normalized)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Fuseau horaire invalide") from exc
+        return normalized
+
     @field_validator("currency")
     @classmethod
     def validate_currency(cls, value: str) -> str:
@@ -1118,9 +1248,39 @@ class ReportEmailRequest(BaseModel):
     include_expenses: bool = True
     include_purchases: bool = True
 
+    @field_validator("period_type")
+    @classmethod
+    def validate_period_type(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"daily", "weekly", "monthly", "yearly", "custom"}:
+            raise ValueError("Periode de rapport invalide")
+        return normalized
+
+    @field_validator("subject")
+    @classmethod
+    def validate_subject(cls, value: str) -> str:
+        normalized = " ".join(str(value or "").splitlines()).strip()
+        if len(normalized) > 180:
+            raise ValueError("Le sujet ne doit pas depasser 180 caracteres")
+        return normalized
+
 
 class ReportEmailTestRequest(BaseModel):
     recipient: str = ""
+
+
+class SmtpPasswordUpdate(BaseModel):
+    password: str = Field(min_length=8, max_length=256)
+
+    @field_validator("password")
+    @classmethod
+    def validate_smtp_password(cls, value: str) -> str:
+        normalized = "".join(str(value or "").split())
+        if len(normalized) < 8:
+            raise ValueError("Le mot de passe SMTP doit contenir au moins 8 caracteres")
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("Mot de passe SMTP invalide")
+        return normalized
 
 
 class AuditLogOut(BaseModel):

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, fmtDateTime } from '../lib/api'
+import { useI18n } from '../lib/i18n'
 import { Copy, Droplets, Gauge, Plus, ScanLine, Settings2, TrendingUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import './PrinterPage.css'
@@ -12,6 +13,7 @@ const TYPES = [
 ]
 
 export default function PrinterPage() {
+  const { translate } = useI18n()
   const navigate = useNavigate()
   const [data, setData] = useState({ today:{ quantity:0,revenue:0,by_type:{} }, month:{ quantity:0,revenue:0,by_type:{} }, jobs:[], counters:[] })
   const [job, setJob] = useState({ service_type:'bw', quantity:1, unit_price:0, notes:'' })
@@ -46,25 +48,29 @@ export default function PrinterPage() {
     } catch (error) { toast.error(error.response?.data?.detail || 'Compteur invalide') }
   }
   const setup = async () => {
-    const { data } = await api.post('/printer/setup-services')
-    toast.success(data.count ? `${data.count} raccourci(s) ajouté(s) au POS` : 'Les raccourcis POS existent déjà')
+    try {
+      const { data } = await api.post('/printer/setup-services')
+      toast.success(data.count ? `${data.count} raccourci(s) ajouté(s) au POS` : 'Les raccourcis POS existent déjà')
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Installation des raccourcis impossible')
+    }
   }
 
   return <div className="page-content printer-page">
     <header className="page-header">
-      <div><h1 className="page-title">Konica Minolta C454e</h1><p>Suivi manuel des copies, scans, compteurs et coûts.</p></div>
+      <div><h1 className="page-title">Konica Minolta C454e</h1><p>{translate('Suivi manuel des copies, scans, compteurs et coûts.')}</p></div>
       <div className="toolbar"><button className="btn btn-secondary" onClick={setup}><Settings2 size={16}/> Installer raccourcis POS</button><button className="btn btn-primary" onClick={() => navigate('/expenses')}><Plus size={16}/> Dépense impression</button></div>
     </header>
     <section className="printer-kpis">
-      <Kpi label="Copies aujourd'hui" value={data.today.quantity} sub={`${fmt(data.today.revenue)} MAD`} />
-      <Kpi label="Copies ce mois" value={data.month.quantity} sub={`${fmt(data.month.revenue)} MAD`} />
-      <Kpi label="N&B ce mois" value={data.month.by_type?.bw || 0} sub="pages" />
-      <Kpi label="Résultat impression" value={`${fmt(data.month_net || 0)} MAD`} sub={`${fmt(data.month_expenses || 0)} MAD de charges`} />
+      <Kpi label={translate("Copies aujourd'hui")} value={data.today.quantity} sub={`${fmt(data.today.revenue)} MAD`} />
+      <Kpi label={translate('Copies ce mois')} value={data.month.quantity} sub={`${fmt(data.month.revenue)} MAD`} />
+      <Kpi label={translate('N&B ce mois')} value={data.month.by_type?.bw || 0} sub={translate('pages')} />
+      <Kpi label={translate('Résultat impression')} value={`${fmt(data.month_net || 0)} MAD`} sub={`${fmt(data.month_expenses || 0)} MAD ${translate('de charges')}`} />
     </section>
     <section className="printer-grid">
       <div className="card printer-entry">
         <h2><Copy size={19}/> Enregistrer un travail</h2>
-        <div className="printer-type-picks">{TYPES.map(({value,label,icon:Icon}) => <button key={value} className={job.service_type===value?'active':''} onClick={() => setJob(j=>({...j,service_type:value}))}><Icon size={18}/>{label}</button>)}</div>
+        <div className="printer-type-picks">{TYPES.map(({value,label,icon:Icon}) => <button key={value} className={job.service_type===value?'active':''} onClick={() => setJob(j=>({...j,service_type:value}))}><Icon size={18}/>{translate(label)}</button>)}</div>
         <div className="form-grid cols-2"><label>Nombre de pages<input type="number" min="1" value={job.quantity} onChange={e=>setJob(j=>({...j,quantity:e.target.value}))}/></label><label>Prix unitaire libre<input type="number" min="0" step=".01" value={job.unit_price} onChange={e=>setJob(j=>({...j,unit_price:e.target.value}))}/></label></div>
         <label>Note<input value={job.notes} onChange={e=>setJob(j=>({...j,notes:e.target.value}))}/></label>
         <div className="printer-total"><span>Total</span><strong>{fmt(Number(job.quantity)*Number(job.unit_price))} MAD</strong></div>
@@ -79,7 +85,7 @@ export default function PrinterPage() {
         <div className="counter-history">{data.counters.slice(0,4).map(row=><div key={row.id}><span>{fmtDateTime(row.recorded_at)}</span><strong>N&B {row.bw_total} · C {row.color_total} · Scan {row.scan_total}</strong></div>)}</div>
       </div>
     </section>
-    <section className="card"><h2 className="printer-history-title"><TrendingUp size={19}/> Historique du mois</h2><div className="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Quantité</th><th>Prix</th><th>Total</th><th>Note</th></tr></thead><tbody>{data.jobs.map(row=><tr key={row.id}><td>{fmtDateTime(row.date_time)}</td><td>{row.service_label}</td><td>{row.quantity}</td><td>{fmt(row.unit_price)} MAD</td><td><strong>{fmt(row.total_amount)} MAD</strong></td><td>{row.notes||'—'}</td></tr>)}</tbody></table></div></section>
+    <section className="card"><h2 className="printer-history-title"><TrendingUp size={19}/> Historique du mois</h2><div className="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Quantité</th><th>Prix</th><th>Total</th><th>Note</th></tr></thead><tbody>{data.jobs.map(row=><tr key={row.id}><td>{fmtDateTime(row.date_time)}</td><td>{translate(row.service_label)}</td><td>{row.quantity}</td><td>{fmt(row.unit_price)} MAD</td><td><strong>{fmt(row.total_amount)} MAD</strong></td><td>{row.notes||'—'}</td></tr>)}</tbody></table></div></section>
   </div>
 }
 function Kpi({label,value,sub}) { return <article><span>{label}</span><strong>{value}</strong><small>{sub}</small></article> }

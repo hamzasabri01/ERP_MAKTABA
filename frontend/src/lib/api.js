@@ -144,8 +144,20 @@ api.interceptors.request.use(cfg => {
 })
 
 api.interceptors.response.use(
-  res => res,
+  res => {
+    const method = String(res.config?.method || 'get').toLowerCase()
+    if (['post', 'put', 'patch', 'delete'].includes(method)) {
+      const url = String(res.config?.url || '')
+      window.dispatchEvent(new CustomEvent('proerp:data-changed', {
+        detail: { url, method, at: Date.now() },
+      }))
+    }
+    return res
+  },
   async err => {
+    if (err.response?.data && typeof err.response.data.detail !== 'string') {
+      err.response.data.detail = apiErrorMessage(err, 'Une erreur de validation est survenue')
+    }
     const requestUrl = String(err.config?.url || '')
     const isAuthRequest = ['/auth/login', '/auth/firebase-login', '/auth/refresh', '/auth/logout', '/auth/csrf']
       .some(path => requestUrl.includes(path))
@@ -181,4 +193,26 @@ export const fmtDateTime = (d) => {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
+}
+
+export function apiErrorMessage(error, fallback = 'Une erreur est survenue') {
+  const detail = error?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.map(item => {
+      if (typeof item === 'string') return item
+      const field = Array.isArray(item?.loc)
+        ? item.loc.filter(part => !['body', 'query', 'path'].includes(String(part))).join(' → ')
+        : ''
+      const message = String(item?.msg || item?.message || '').replace(/^Value error,\s*/i, '')
+      return [field, message].filter(Boolean).join(' : ')
+    }).filter(Boolean)
+    if (messages.length) return messages.join('\n')
+  }
+  if (detail && typeof detail === 'object') {
+    const message = detail.message || detail.msg
+    if (message) return String(message)
+  }
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message
+  return fallback
 }

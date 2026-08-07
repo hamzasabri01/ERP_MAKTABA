@@ -14,7 +14,7 @@ if (Test-Path $PidFile) {
     Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
 }
 
-foreach ($port in @(8000, 5173)) {
+foreach ($port in @(8000, 8001, 8010, 5173)) {
     Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess -Unique |
         Where-Object { $_ -and $_ -ne 0 -and $_ -ne $PID } |

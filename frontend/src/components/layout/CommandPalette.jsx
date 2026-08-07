@@ -123,7 +123,7 @@ export default function CommandPalette({ open, onClose, navItems, t }) {
 
   return (
     <div className="command-overlay" onMouseDown={event => event.target === event.currentTarget && onClose()}>
-      <div className="command-panel" role="dialog" aria-modal="true">
+      <div className="command-panel" role="dialog" aria-modal="true" aria-label="Recherche rapide">
         <div className="command-search">
           <Search size={18} />
           <input
@@ -152,15 +152,17 @@ export default function CommandPalette({ open, onClose, navItems, t }) {
               <button
                 key={`${item.type}-${item.path}-${index}`}
                 className={`command-item ${index === activeIndex ? 'active' : ''}`}
+                role="option"
+                aria-selected={index === activeIndex}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => runItem(item)}
               >
-                <span className="command-icon"><Icon size={17} /></span>
-                <span>
+                <span className="command-palette-icon"><Icon size={18} /></span>
+                <span className="command-item-copy">
                   <strong>{item.title}</strong>
                   <small>{item.subtitle}</small>
                 </span>
-                <ArrowRight size={15} />
+                <ArrowRight className="command-item-arrow" size={16} />
               </button>
             )
           })}

@@ -1,18 +1,20 @@
 // src/pages/POSPage.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   Banknote, Barcode, Boxes, Calculator, CheckCircle2, CreditCard, Minus, Package, Pause, Plus,
   Printer, Receipt, RotateCcw, Search, ShoppingBag, Smartphone, Sparkles, Trash2, User, Wifi, X
 } from 'lucide-react'
 import QRCode from 'qrcode'
-import { api, fmt, fmtDateTime, isVatEnabled, operationHeaders, resolveMediaUrl, SETTLEMENT_METHODS } from '../lib/api'
+import { api, apiErrorMessage, fmt, fmtDateTime, isVatEnabled, operationHeaders, resolveMediaUrl, SETTLEMENT_METHODS } from '../lib/api'
 import { PageLoader } from '../components/ui/LoadingStates'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { useI18n } from '../lib/i18n'
 import ThermalReceipt, { printThermalReceipt, ThermalReceiptPrintDocument } from '../components/print/ThermalReceipt'
 import './POSPage.css'
+import { storageGet, storageJson, storageRemove, storageSet } from '../lib/safeStorage'
 
 const HELD_KEY = 'proerp_pos_held_cart'
 const DRAFT_KEY = 'maktaba_pos_active_draft_v1'
@@ -23,18 +25,20 @@ const emptyPayment = { mode: 'cash', received: '', discount: 0, client_id: '' }
 
 function readPosDraft() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null')
+    const parsed = storageJson(DRAFT_KEY)
     if (parsed?.version !== 1 || !Array.isArray(parsed.cart)) {
       return { cart: [], payment: emptyPayment }
     }
-    const cart = parsed.cart.filter(item =>
-      Number(item?.product_id) > 0
-      && Number(item?.quantity) > 0
-      && Number(item?.unit_price) >= 0
-    )
+    const cart = parsed.cart
+      .filter(item => Number(item?.product_id) > 0 && Number(item?.unit_price) >= 0)
+      .map(item => ({
+        ...item,
+        quantity: Number(item?.quantity) > 0 ? item.quantity : 1,
+        discount: Number(item?.discount) >= 0 ? Math.min(Number(item.discount), 100) : 0,
+      }))
     return { cart, payment: { ...emptyPayment, ...(parsed.payment || {}) } }
   } catch {
-    try { localStorage.removeItem(DRAFT_KEY) } catch {}
+    storageRemove(DRAFT_KEY)
     return { cart: [], payment: emptyPayment }
   }
 }
@@ -42,10 +46,10 @@ function readPosDraft() {
 function writePosDraft(cart, payment) {
   try {
     if (!cart.length) {
-      localStorage.removeItem(DRAFT_KEY)
+      storageRemove(DRAFT_KEY)
       return
     }
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+    storageSet(DRAFT_KEY, JSON.stringify({
       version: 1,
       saved_at: new Date().toISOString(),
       cart,
@@ -77,13 +81,14 @@ function lineTotal(item, vatEnabled = true) {
 }
 
 export default function POSPage() {
+  const [searchParams] = useSearchParams()
   const confirm = useConfirm()
   const { language } = useI18n()
   const [products, setProducts] = useState([])
   const [clients, setClients] = useState([])
   const [categories, setCategories] = useState([])
   const [cart, setCart] = useState(() => readPosDraft().cart)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(() => searchParams.get('search') || '')
   const [categoryId, setCategoryId] = useState('')
   const [catalogMode, setCatalogMode] = useState('all')
   const [serviceDraft, setServiceDraft] = useState(null)
@@ -111,18 +116,27 @@ export default function POSPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [p, c, cat, settingsRes] = await Promise.all([
-        api.get('/products', { params: { limit: 500 } }),
+      const loadAllProducts = async () => {
+        const pageSize = 500
+        const all = []
+        for (let skip = 0; ; skip += pageSize) {
+          const { data } = await api.get('/products', { params: { skip, limit: pageSize } })
+          all.push(...data)
+          if (data.length < pageSize) return all
+        }
+      }
+      const [allProducts, c, cat, settingsRes] = await Promise.all([
+        loadAllProducts(),
         api.get('/clients', { params: { limit: 500 } }),
         api.get('/categories'),
         api.get('/settings'),
       ])
-      setProducts(p.data)
+      setProducts(allProducts)
       setClients(c.data)
       setCategories(cat.data)
       setSettings(settingsRes.data || {})
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Erreur de chargement POS')
+      toast.error(apiErrorMessage(e, 'Erreur de chargement POS'))
     } finally {
       setLoading(false)
     }
@@ -367,6 +381,7 @@ export default function POSPage() {
         tax_rate: vatEnabled ? toNumber(product.tax_rate, 20) : 0,
         stock_quantity: available,
         product_type: product.product_type,
+        allow_fractional_sale: Boolean(product.allow_fractional_sale),
       }]
     })
   }
@@ -378,7 +393,7 @@ export default function POSPage() {
     }
     setScannerStarting(true)
     try {
-      const { data } = await api.post('/mobile-scanner/sessions')
+      const { data } = await api.post('/mobile-scanner/sessions', null, { timeout:45000 })
       const current = new URL(window.location.href)
       if (!data.public_url && current.protocol !== 'https:') {
         throw new Error('Le tunnel HTTPS du scanner est temporairement indisponible. Réessayez dans quelques secondes.')
@@ -399,7 +414,7 @@ export default function POSPage() {
       setMobileScanner({ ...data, url: scannerUrl, qrDataUrl, connected: false, lastEvent: 0 })
       setScannerModalOpen(true)
     } catch (error) {
-      toast.error(error.response?.data?.detail || error.message || 'Impossible de démarrer le scanner mobile')
+      toast.error(apiErrorMessage(error, 'Impossible de démarrer le scanner mobile'))
     } finally {
       setScannerStarting(false)
     }
@@ -483,23 +498,48 @@ export default function POSPage() {
   }
 
   const updateQty = (productId, quantity) => {
+    // Keep the line while the cashier clears the field to type a new quantity.
+    if (quantity === '') {
+      setCart(prev => prev.map(item => item.product_id === productId
+        ? { ...item, quantity: '' }
+        : item
+      ))
+      return
+    }
     const qty = Math.max(0, toNumber(quantity))
-    setCart(prev => prev.flatMap(item => {
-      if (item.product_id !== productId) return [item]
-      if (qty <= 0) return []
+    setCart(prev => prev.map(item => {
+      if (item.product_id !== productId) return item
+      if (qty <= 0) return { ...item, quantity: 1 }
       if (['product', 'bundle'].includes(item.product_type) && qty > item.stock_quantity) {
         toast.error(`Quantité ajustée au stock disponible: ${fmt(item.stock_quantity, 0)}`)
-        return [{ ...item, quantity: item.stock_quantity }]
+        return { ...item, quantity: item.stock_quantity }
       }
-      return [{ ...item, quantity: qty }]
+      return { ...item, quantity: qty }
     }))
   }
 
+  const normalizeQty = (productId, quantity) => {
+    if (quantity === '' || toNumber(quantity) <= 0) updateQty(productId, 1)
+  }
+
+  const removeLine = (productId) => {
+    setCart(prev => prev.filter(item => item.product_id !== productId))
+  }
+
   const updateLine = (productId, key, value) => {
+    const nextValue = value === ''
+      ? ''
+      : key === 'discount'
+        ? Math.min(100, Math.max(0, toNumber(value)))
+        : toNumber(value)
     setCart(prev => prev.map(item => item.product_id === productId
-      ? { ...item, [key]: toNumber(value) }
+      ? { ...item, [key]: nextValue }
       : item
     ))
+  }
+
+  const normalizeLineValue = (productId, key, value, fallback = 0) => {
+    if (value === '') updateLine(productId, key, fallback)
   }
 
   const clearCart = async () => {
@@ -515,18 +555,18 @@ export default function POSPage() {
     paymentRef.current = emptyPayment
     setCart([])
     setPayment(emptyPayment)
-    localStorage.removeItem(DRAFT_KEY)
-    localStorage.removeItem(HELD_KEY)
+    storageRemove(DRAFT_KEY)
+    storageRemove(HELD_KEY)
   }
 
   const holdCart = () => {
     if (!cart.length) return toast.error('Panier vide')
-    localStorage.setItem(HELD_KEY, JSON.stringify(cart))
+    if (!storageSet(HELD_KEY, JSON.stringify(cart))) return toast.error('Stockage local indisponible')
     toast.success('Panier mis en attente')
   }
 
   const restoreCart = () => {
-    const saved = localStorage.getItem(HELD_KEY)
+    const saved = storageGet(HELD_KEY)
     if (!saved) return toast.error('Aucun panier en attente')
     try {
       setCart(JSON.parse(saved))
@@ -538,11 +578,29 @@ export default function POSPage() {
 
   const finishSale = async () => {
     if (!cart.length) return toast.error('Ajoutez au moins un produit')
+    const invalidLine = cart.findIndex(item => {
+      const quantity = toNumber(item.quantity, Number.NaN)
+      const discount = toNumber(item.discount, Number.NaN)
+      const unitPrice = toNumber(item.unit_price, Number.NaN)
+      return !Number.isFinite(quantity) || quantity <= 0
+        || (!item.allow_fractional_sale && !Number.isInteger(quantity))
+        || !Number.isFinite(unitPrice) || unitPrice < 0
+        || !Number.isFinite(discount) || discount < 0 || discount > 100
+    })
+    if (invalidLine >= 0) return toast.error(`Vérifiez la quantité, le prix et la remise de la ligne ${invalidLine + 1}`)
+    const received = toNumber(payment.received, Number.NaN)
+    if (!Number.isFinite(received) || received < 0) return toast.error('Le montant reçu est invalide')
     setSaving(true)
+    let createdSale = null
+    let confirmedSale = null
     try {
-      const freshProducts = await api.get('/products', { params: { limit: 500 } })
-      setProducts(freshProducts.data)
-      if (syncCartWithStock(freshProducts.data)) {
+      const productIds = [...new Set(cart.map(item => item.product_id))]
+      const freshRows = await Promise.all(productIds.map(id => api.get(`/products/${id}`).then(response => response.data)))
+      setProducts(previous => {
+        const freshById = new Map(freshRows.map(item => [item.id, item]))
+        return previous.map(item => freshById.get(item.id) || item)
+      })
+      if (syncCartWithStock(freshRows)) {
         setSaving(false)
         return
       }
@@ -553,36 +611,65 @@ export default function POSPage() {
         toast.error('Le total du ticket doit être strictement positif')
         return
       }
-      if (totals.received < Number(exact.total_amount)) {
+      if (received < Number(exact.total_amount)) {
         toast.error(`Montant reçu insuffisant. Total exact: ${fmt(exact.total_amount)} ${exact.currency_code}`)
         return
       }
       const created = await api.post('/sales', payload)
-      const confirmed = await api.post(`/sales/${created.data.id}/confirm`, {}, { headers: operationHeaders(created.data.version) })
-      const paymentAmount = Number(confirmed.data.total_amount)
+      createdSale = created.data
+      const confirmed = await api.post(`/sales/${createdSale.id}/confirm`, {}, { headers: operationHeaders(createdSale.version) })
+      confirmedSale = confirmed.data
+      const paymentAmount = Number(confirmedSale.total_amount)
       if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
         throw new Error('INVALID_CONFIRMED_TOTAL')
       }
-      const paid = await api.post(`/sales/${created.data.id}/payment`, {
+      const paid = await api.post(`/sales/${createdSale.id}/payment`, {
         amount: paymentAmount,
         payment_mode: payment.mode,
-      }, { headers: operationHeaders(confirmed.data.version) })
+      }, { headers: operationHeaders(confirmedSale.version) })
       setLastSale(paid.data)
-      localStorage.setItem(LAST_TICKET_KEY, String(paid.data.id))
+      storageSet(LAST_TICKET_KEY, String(paid.data.id))
       cartRef.current = []
       paymentRef.current = emptyPayment
       setCart([])
       setPayment(emptyPayment)
-      localStorage.removeItem(DRAFT_KEY)
-      localStorage.removeItem(HELD_KEY)
+      storageRemove(DRAFT_KEY)
+      storageRemove(HELD_KEY)
       setCheckoutOpen(false)
       await load()
       toast.success(`Ticket ${paid.data.number} encaissé`)
     } catch (e) {
+      if (createdSale && !confirmedSale) {
+        try {
+          const { data: currentSale } = await api.get(`/sales/${createdSale.id}`)
+          if (currentSale.status === 'draft') {
+            await api.delete(`/sales/${createdSale.id}`, {
+              headers: operationHeaders(currentSale.version, { idempotent: false }),
+            })
+          } else {
+            confirmedSale = currentSale
+          }
+        } catch {
+          // The original API error below remains the most useful message.
+        }
+      }
+      if (confirmedSale) {
+        setLastSale(confirmedSale)
+        storageSet(LAST_TICKET_KEY, String(confirmedSale.id))
+        cartRef.current = []
+        paymentRef.current = emptyPayment
+        setCart([])
+        setPayment(emptyPayment)
+        storageRemove(DRAFT_KEY)
+        storageRemove(HELD_KEY)
+        setCheckoutOpen(false)
+        toast.error(`La facture ${confirmedSale.number} est confirmée mais non encaissée. Enregistrez son paiement depuis Ventes.`)
+        return
+      }
       toast.error(
         e.message === 'INVALID_CONFIRMED_TOTAL'
           ? 'Le serveur a retourné un total invalide. La vente n’a pas été encaissée.'
-          : (e.response?.data?.detail || 'Erreur encaissement')
+          : apiErrorMessage(e, 'Erreur encaissement')
       )
     } finally {
       setSaving(false)
@@ -591,13 +678,13 @@ export default function POSPage() {
 
   const printReceipt = () => printThermalReceipt()
   const reopenLastTicket = async () => {
-    const id = Number(localStorage.getItem(LAST_TICKET_KEY))
+    const id = Number(storageGet(LAST_TICKET_KEY))
     if (!Number.isInteger(id) || id <= 0) return toast.error('Aucun ticket précédent disponible')
     try {
       const { data } = await api.get(`/sales/${id}`)
       setLastSale(data)
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Impossible de charger le dernier ticket')
+      toast.error(apiErrorMessage(error, 'Impossible de charger le dernier ticket'))
     }
   }
 
@@ -766,19 +853,22 @@ export default function POSPage() {
             ) : cart.map(item => {
               const lt = lineTotal(item, vatEnabled)
               return (
-                <div className="pos-line" key={item.product_id}>
+                <div className={`pos-line type-${item.product_type}`} key={item.product_id}>
                   <div className="pos-line-main">
                     <div>
                       <strong>{item.name}</strong>
                       <small className={`pos-line-kind type-${item.product_type}`}>{item.product_type === 'service' ? 'Service' : item.product_type === 'bundle' ? 'Pack scolaire' : item.code || 'Produit'}</small>
                     </div>
-                    <span>{fmt(item.unit_price)} {currency} x {fmt(item.quantity, 0)}</span>
+                    <span className="pos-line-price">
+                      <b>{fmt(item.unit_price)} {currency}</b>
+                      <small>× {fmt(item.quantity, 0)}</small>
+                    </span>
                   </div>
                   <div className="pos-line-controls">
-                    <button className="btn btn-secondary btn-icon btn-sm" onClick={() => updateQty(item.product_id, item.quantity - 1)}><Minus size={14} /></button>
-                    <input type="number" min="0" step="1" value={item.quantity} onChange={e => updateQty(item.product_id, e.target.value)} />
-                    <button className="btn btn-secondary btn-icon btn-sm" onClick={() => updateQty(item.product_id, item.quantity + 1)}><Plus size={14} /></button>
-                    <button className="btn btn-danger btn-icon btn-sm" onClick={() => updateQty(item.product_id, 0)}><Trash2 size={14} /></button>
+                    <button className="btn btn-secondary btn-icon btn-sm" onClick={() => updateQty(item.product_id, Math.max(1, toNumber(item.quantity, 1) - 1))}><Minus size={14} /></button>
+                    <input type="number" min="1" step="1" value={item.quantity} onChange={e => updateQty(item.product_id, e.target.value)} onBlur={e => normalizeQty(item.product_id, e.target.value)} />
+                    <button className="btn btn-secondary btn-icon btn-sm" onClick={() => updateQty(item.product_id, toNumber(item.quantity, 1) + 1)}><Plus size={14} /></button>
+                    <button className="btn btn-danger btn-icon btn-sm" onClick={() => removeLine(item.product_id)}><Trash2 size={14} /></button>
                   </div>
                   <div className="pos-line-extra">
                     {item.product_type === 'service' && item.pricing_mode !== 'fixed' && (
@@ -792,7 +882,7 @@ export default function POSPage() {
                         />
                       </label>
                     )}
-                    <label>Remise %<input type="number" min="0" max="100" value={item.discount} onChange={e => updateLine(item.product_id, 'discount', e.target.value)} /></label>
+                    <label>Remise %<input type="number" min="0" max="100" value={item.discount} onChange={e => updateLine(item.product_id, 'discount', e.target.value)} onBlur={e => normalizeLineValue(item.product_id, 'discount', e.target.value, 0)} /></label>
                     {vatEnabled ? <label>TVA %<select value={item.tax_rate} onChange={e => updateLine(item.product_id, 'tax_rate', e.target.value)}>{taxRates.map(rate => <option key={rate} value={rate}>{rate}%</option>)}</select></label> : null}
                     <strong>{fmt(lt.total)} {currency}</strong>
                   </div>

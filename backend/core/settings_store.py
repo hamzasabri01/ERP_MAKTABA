@@ -68,6 +68,31 @@ def get_smtp_password(raw: dict | None = None) -> str:
     return str(legacy or "")
 
 
+def set_smtp_password(value: str) -> None:
+    """Persist the SMTP secret in backend/.env without exposing it in JSON."""
+    secret = str(value or "").strip()
+    if not secret or any(char in secret for char in "\r\n\x00"):
+        raise ValueError("Invalid SMTP password")
+    env_path = BASE_DIR / ".env"
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    replacement = f"SMTP_PASSWORD={secret}"
+    updated = []
+    found = False
+    for line in lines:
+        if line.strip().startswith("SMTP_PASSWORD="):
+            if not found:
+                updated.append(replacement)
+                found = True
+        else:
+            updated.append(line)
+    if not found:
+        updated.append(replacement)
+    temporary = env_path.with_suffix(".env.tmp")
+    temporary.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    os.replace(temporary, env_path)
+    os.environ["SMTP_PASSWORD"] = secret
+
+
 def sanitize_for_storage(data: dict) -> dict:
     return {
         key: value

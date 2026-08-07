@@ -2,13 +2,18 @@ export function PageLoader({ title = 'Chargement', detail = 'Preparation de la p
   return (
     <div className="page-loader" role="status" aria-live="polite">
       <div className="page-loader-card">
-        <div className="page-loader-icon">
-          <img src="/brand/sabri-library.png" alt="" />
+        <div className="page-loader-brand" aria-hidden="true">
+          <span className="page-loader-orbit"><i /><i /><i /></span>
+          <div className="page-loader-icon">
+            <img src="/brand/sabri-library.png" alt="" />
+          </div>
         </div>
         <div className="page-loader-copy">
+          <span className="page-loader-name">LIBRARY SABRI</span>
           <strong>{title}</strong>
           <span>{detail}</span>
         </div>
+        <div className="page-loader-dots" aria-hidden="true"><i /><i /><i /></div>
         <div className="page-loader-track">
           <span />
         </div>

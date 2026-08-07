@@ -1,8 +1,8 @@
 // src/pages/SalesPage.jsx
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { api, fmt, fmtDate, fmtDateTime, isVatEnabled, operationHeaders, PAYMENT_METHODS, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
-import { Plus, Search, Edit2, Trash2, Check, X, CreditCard, Eye, ShoppingCart, Printer, Download, FileCheck2, Sparkles, RotateCcw } from 'lucide-react'
+import { api, apiErrorMessage, fmt, fmtDate, fmtDateTime, isVatEnabled, operationHeaders, PAYMENT_METHODS, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
+import { Plus, Search, Edit2, Trash2, Check, X, CreditCard, Eye, ShoppingCart, Printer, Download, FileCheck2, Sparkles, RotateCcw, Mail, Send, CalendarDays, FileSpreadsheet } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { TableLoadingRow } from '../components/ui/LoadingStates'
 import { useConfirm } from '../components/ui/ConfirmDialog'
@@ -31,6 +31,31 @@ const STATUS_LABELS = { draft:'Brouillon', confirmed:'Confirmé', partially_paid
 const EMPTY_SALE = { doc_type:'invoice', client_id:'', date_time:'', notes:'', discount:0, payment_mode:'cash', paid_amount:0, items:[] }
 const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, purchase_price:0, discount:0, tax_rate:20 }
 const PAGE_SIZE = 80
+
+const localIsoDate = value => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const salesReportRange = period => {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  if (period === 'weekly') {
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7))
+    end.setTime(start.getTime())
+    end.setDate(start.getDate() + 6)
+  } else if (period === 'monthly') {
+    start.setDate(1)
+    end.setFullYear(start.getFullYear(), start.getMonth() + 1, 0)
+  } else if (period === 'yearly') {
+    start.setMonth(0, 1)
+    end.setFullYear(start.getFullYear(), 11, 31)
+  }
+  return { start_date: localIsoDate(start), end_date: localIsoDate(end) }
+}
 
 function buildSalePayload(form) {
   return {
@@ -84,10 +109,65 @@ export default function SalesPage() {
   const [returnForm, setReturnForm] = useState({ reason:'', resolution:'exchange', items:[], exchange_items:[] })
   const [returnSaving, setReturnSaving] = useState(false)
   const [serviceLineDraft, setServiceLineDraft] = useState(null)
+  const [reportDialog, setReportDialog] = useState(false)
+  const [reportSending, setReportSending] = useState(false)
+  const [reportForm, setReportForm] = useState(() => ({ period_type:'monthly', ...salesReportRange('monthly') }))
+  const [reportRecipients, setReportRecipients] = useState([])
+  const [reportRecipientDraft, setReportRecipientDraft] = useState('')
   const currency = serverPreview?.currency_code || settings.currency || 'MAD'
   const paymentModes = SETTLEMENT_METHODS
   const vatEnabled = isVatEnabled(settings)
   const taxRates = String(settings.tax_rates || '0,7,10,14,20').split(',').map(Number).filter(Number.isFinite)
+
+  const openReportDialog = () => {
+    const hasCustomFilter = Boolean(dateFrom && dateTo)
+    const savedRecipients = String(settings.report_email_recipients || settings.smtp_from_email || '').split(/[;,]/).map(value => value.trim().toLowerCase()).filter(Boolean)
+    setReportForm({
+      period_type: hasCustomFilter ? 'custom' : 'monthly',
+      ...(hasCustomFilter ? { start_date:dateFrom, end_date:dateTo } : salesReportRange('monthly')),
+    })
+    setReportRecipients([...new Set(savedRecipients)])
+    setReportRecipientDraft('')
+    setReportDialog(true)
+  }
+
+  const changeReportPeriod = period => setReportForm(current => period === 'custom'
+    ? { ...current, period_type:period }
+    : { ...current, period_type:period, ...salesReportRange(period) })
+
+  const normalizeRecipientList = value => String(value || '').split(/[;,\s]+/).map(item => item.trim().toLowerCase()).filter(Boolean)
+  const isValidRecipient = value => /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(value)
+
+  const addReportRecipients = rawValue => {
+    const candidates = normalizeRecipientList(rawValue)
+    const invalid = candidates.find(value => !isValidRecipient(value))
+    if (invalid) {
+      toast.error(`Adresse email invalide: ${invalid}`)
+      return false
+    }
+    setReportRecipients(current => [...new Set([...current, ...candidates])])
+    setReportRecipientDraft('')
+    return true
+  }
+
+  const sendSalesReport = async () => {
+    const pending = normalizeRecipientList(reportRecipientDraft)
+    const recipients = [...new Set([...reportRecipients, ...pending])]
+    if (!recipients.length) return toast.error('Ajoutez au moins une adresse email')
+    const invalid = recipients.find(value => !isValidRecipient(value))
+    if (invalid) return toast.error(`Adresse email invalide: ${invalid}`)
+    if (!reportForm.start_date || !reportForm.end_date || reportForm.start_date > reportForm.end_date) return toast.error('La periode selectionnee est invalide')
+    setReportSending(true)
+    try {
+      const { data } = await api.post('/reports/email/send', { ...reportForm, recipients:recipients.join(',') })
+      toast.success(`Rapport envoye a ${data.recipients?.length || recipients.length} destinataire(s)`)
+      setReportDialog(false)
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "Impossible d'envoyer le rapport"))
+    } finally {
+      setReportSending(false)
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -122,7 +202,7 @@ export default function SalesPage() {
         if (res.status === 'rejected') console.warn('Optional sales data failed to load', res.reason)
       })
     } catch (e) {
-      const message = e.response?.data?.detail || 'Impossible de charger les ventes. Verifiez la connexion API.'
+      const message = apiErrorMessage(e, 'Impossible de charger les ventes. Verifiez la connexion API.')
       setLoadError(message)
       toast.error(message)
     } finally {
@@ -170,7 +250,7 @@ export default function SalesPage() {
       setSelected(sale)
       setModal('form')
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Impossible de charger le document')
+      toast.error(apiErrorMessage(error, 'Impossible de charger le document'))
     }
   }
   const openView = async (s) => {
@@ -273,7 +353,7 @@ export default function SalesPage() {
       setModal(null)
       load()
     } catch (e) {
-      toast.error(e.response?.data?.detail || 'Retour impossible')
+      toast.error(apiErrorMessage(e, 'Retour impossible'))
     } finally {
       setReturnSaving(false)
     }
@@ -314,7 +394,7 @@ export default function SalesPage() {
 
   const handleConfirm = async (s) => {
     try { await api.post(`/sales/${s.id}/confirm`, {}, { headers: operationHeaders(s.version) }); toast.success('Confirmé'); load() }
-    catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
   }
   const handleCancel = async (s) => {
     const ok = await confirm({
@@ -325,7 +405,7 @@ export default function SalesPage() {
     })
     if (!ok) return
     try { await api.post(`/sales/${s.id}/cancel`, {}, { headers: operationHeaders(s.version) }); toast.success('Annulé'); load() }
-    catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
   }
   const handleConvertQuote = async (s) => {
     const ok = await confirm({
@@ -336,11 +416,15 @@ export default function SalesPage() {
     })
     if (!ok) return
     try {
-      const { data } = await api.post(`/sales/${s.id}/convert-to-invoice`)
+      const { data } = await api.post(
+        `/sales/${s.id}/convert-to-invoice`,
+        {},
+        { headers: operationHeaders(s.version) },
+      )
       toast.success(`Facture creee: ${data.number}`)
       setDocType('invoice')
       load()
-    } catch(e) { toast.error(e.response?.data?.detail || 'Conversion impossible') }
+    } catch(e) { toast.error(apiErrorMessage(e, 'Conversion impossible')) }
   }
   const handleDownload = async (s) => {
     if (downloadingId === s.id) return
@@ -349,7 +433,7 @@ export default function SalesPage() {
       const { data } = await api.get(`/sales/${s.id}`)
       await downloadSalePdf(data, settings)
       toast.success('PDF téléchargé')
-    } catch(e) { toast.error(e.response?.data?.detail || 'Téléchargement PDF impossible') }
+    } catch(e) { toast.error(apiErrorMessage(e, 'Téléchargement PDF impossible')) }
     finally { setDownloadingId(null) }
   }
   const exportList = () => {
@@ -375,7 +459,7 @@ export default function SalesPage() {
     })
     if (!ok) return
     try { await api.delete(`/sales/${s.id}`, { headers: operationHeaders(s.version, { idempotent: false }) }); toast.success('Supprimé'); load() }
-    catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
   }
   const handlePayment = async () => {
     if (!payAmt || +payAmt <= 0) return toast.error('Montant invalide')
@@ -384,7 +468,7 @@ export default function SalesPage() {
     try {
       await api.post(`/sales/${selected.id}/payment`, { amount: +payAmt, payment_mode: payMode }, { headers: operationHeaders(selected.version) })
       toast.success('Paiement enregistré'); setModal(null); load()
-    } catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    } catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
     finally { setPaymentSaving(false) }
   }
 
@@ -507,7 +591,7 @@ export default function SalesPage() {
       if (!selected) { await api.post('/sales', payload); toast.success('Document créé') }
       else { await api.put(`/sales/${selected.id}`, payload, { headers: operationHeaders(selected.version, { idempotent: false }) }); toast.success('Document mis à jour') }
       setModal(null); load()
-    } catch(e) { toast.error(e.response?.data?.detail || 'Erreur') }
+    } catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
     finally { setSaving(false) }
   }
 
@@ -517,6 +601,7 @@ export default function SalesPage() {
         <h1 className="page-title">Ventes</h1>
         <div className="toolbar">
           <button className="btn btn-secondary" onClick={exportList} disabled={loading || sales.length === 0}><Download size={16} /> Export CSV</button>
+          <button className="btn btn-secondary sales-report-button" onClick={openReportDialog}><Mail size={16} /> Envoyer rapport</button>
           <button className="btn btn-primary" onClick={openCreate}><Plus size={16} /> Nouveau</button>
         </div>
       </div>
@@ -609,6 +694,55 @@ export default function SalesPage() {
           </div>
         </div>
       </div>
+
+      {reportDialog && (
+        <div className="modal-overlay sales-report-overlay" onClick={event => event.target === event.currentTarget && !reportSending && setReportDialog(false)}>
+          <div className="modal sales-report-modal" role="dialog" aria-modal="true" aria-labelledby="sales-report-title">
+            <div className="modal-header sales-report-header">
+              <div className="sales-report-heading">
+                <span className="sales-report-icon"><Send size={22} /></span>
+                <div><span className="sales-report-eyebrow">RAPPORT DES VENTES</span><h2 id="sales-report-title">Envoyer par email</h2><p>Rapport detaille avec factures et utilisateurs.</p></div>
+              </div>
+              <button className="btn btn-secondary btn-sm btn-icon" onClick={() => setReportDialog(false)} disabled={reportSending} aria-label="Fermer"><X size={17}/></button>
+            </div>
+            <div className="modal-body sales-report-body">
+              <div className="form-group">
+                <label className="form-label">Destinataires</label>
+                <div className="sales-report-recipient-box">
+                  {reportRecipients.map(recipient => <span className="sales-report-recipient" key={recipient}><Mail size={13}/>{recipient}<button type="button" onClick={() => setReportRecipients(current => current.filter(value => value !== recipient))} aria-label={`Supprimer ${recipient}`}><X size={13}/></button></span>)}
+                  <div className="sales-report-recipient-entry">
+                    <input autoFocus type="email" value={reportRecipientDraft} onChange={event => setReportRecipientDraft(event.target.value)} onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ',' || event.key === ';') { event.preventDefault(); addReportRecipients(reportRecipientDraft) }
+                      if (event.key === 'Backspace' && !reportRecipientDraft && reportRecipients.length) setReportRecipients(current => current.slice(0, -1))
+                    }} onBlur={() => reportRecipientDraft.trim() && addReportRecipients(reportRecipientDraft)} placeholder="Ajouter une adresse email" />
+                    <button type="button" className="btn btn-secondary btn-sm" onMouseDown={event => event.preventDefault()} onClick={() => addReportRecipients(reportRecipientDraft)} disabled={!reportRecipientDraft.trim()}><Plus size={15}/> Ajouter</button>
+                  </div>
+                </div>
+                <small className="text-muted">Appuyez sur Entrée après chaque adresse. Les doublons sont supprimés automatiquement.</small>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Periode</label>
+                <select value={reportForm.period_type} onChange={event => changeReportPeriod(event.target.value)}>
+                  <option value="daily">Aujourd'hui</option><option value="weekly">Cette semaine (lundi - dimanche)</option><option value="monthly">Ce mois</option><option value="yearly">Cette annee</option><option value="custom">Personnalisee</option>
+                </select>
+              </div>
+              <div className="sales-report-dates">
+                <div className="form-group"><label className="form-label">Date debut</label><input type="date" value={reportForm.start_date} max={reportForm.end_date || undefined} readOnly={reportForm.period_type !== 'custom'} onChange={event => setReportForm(current => ({ ...current, start_date:event.target.value }))}/></div>
+                <div className="form-group"><label className="form-label">Date fin</label><input type="date" value={reportForm.end_date} min={reportForm.start_date || undefined} readOnly={reportForm.period_type !== 'custom'} onChange={event => setReportForm(current => ({ ...current, end_date:event.target.value }))}/></div>
+              </div>
+              <div className="sales-report-period"><CalendarDays size={17}/><span>Du <strong>{fmtDate(reportForm.start_date)}</strong> au <strong>{fmtDate(reportForm.end_date)}</strong></span></div>
+              <div className="sales-report-contents">
+                <div><Mail size={18}/><span><strong>Rapport HTML</strong><small>Indicateurs, CA, caisse et utilisateurs</small></span></div>
+                <div><FileSpreadsheet size={18}/><span><strong>Fichier Excel joint</strong><small>Une feuille separee pour chaque facture</small></span></div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setReportDialog(false)} disabled={reportSending}>Annuler</button>
+              <button className="btn btn-primary" onClick={sendSalesReport} disabled={reportSending}>{reportSending ? <span className="spinner" style={{width:16,height:16}}/> : <Send size={16}/>} {reportSending ? 'Envoi en cours...' : 'Envoyer le rapport'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Form Modal */}
       {modal === 'form' && (

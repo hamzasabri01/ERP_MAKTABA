@@ -56,6 +56,30 @@ npm run dev
 
 Acces local: `http://localhost:5173`
 
+## Mise a jour d'un PC deja utilise (sans perdre les produits)
+
+Ne relancez pas `setup.ps1` pour mettre a jour une installation qui contient
+deja des produits. Utilisez le script dedie depuis la racine du projet:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\update-existing.ps1
+```
+
+Ou double-cliquez sur `MISE-A-JOUR-SANS-PERTE.cmd`.
+
+Le programme de mise a jour arrete temporairement l'application, sauvegarde la
+base SQLite, les images produits, `.env`, les parametres de la librairie et les
+fichiers de recherche dans `%LOCALAPPDATA%\LibrarySabri\upgrade-backups`. Il met
+ensuite le code et les dependances a jour, applique uniquement les evolutions
+additives du schema, puis compare le nombre de produits, ventes, achats et
+mouvements avant/apres. En cas d'erreur, l'ancienne version et ses donnees sont
+restaurees automatiquement.
+
+Pour une tres ancienne copie qui ne contient pas encore le script, telechargez
+uniquement `update-existing.ps1` depuis ce depot dans la racine de l'application
+et executez-le. Il recuperera lui-meme le reste de l'outil avant toute mise a jour.
+
 Identifiants initiaux par defaut si la base est vide: `admin` / `Sabri2026`.
 Le mot de passe peut etre choisi pendant l'execution de `setup.ps1`.
 

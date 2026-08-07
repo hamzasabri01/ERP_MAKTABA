@@ -1,204 +1,146 @@
-# ================================
-# Maktaba Print Web - Launcher
-# ================================
-
+# Library Sabri - idempotent Windows launcher
 param(
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$ForceRestart
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-$BackendDir = "$ScriptDir\backend"
-$FrontendDir = "$ScriptDir\frontend"
-$RootVenvPython = "$ScriptDir\.venv\Scripts\python.exe"
-$BackendVenvPython = "$BackendDir\venv\Scripts\python.exe"
+$BackendDir = Join-Path $ScriptDir "backend"
+$FrontendDir = Join-Path $ScriptDir "frontend"
+$RuntimeDir = Join-Path $ScriptDir ".runtime"
+$BackendPort = 8010
+$RootVenvPython = Join-Path $ScriptDir ".venv\Scripts\python.exe"
+$BackendVenvPython = Join-Path $BackendDir "venv\Scripts\python.exe"
 $VenvPython = if (Test-Path $RootVenvPython) { $RootVenvPython } else { $BackendVenvPython }
+New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
 
-# ────────────────────────────────
-function Write-Info($msg)  { Write-Host "[INFO] $msg" -ForegroundColor Cyan }
-function Write-OK($msg)    { Write-Host "[OK]   $msg" -ForegroundColor Green }
-function Write-Err($msg)   { Write-Host "[ERR]  $msg" -ForegroundColor Red }
-function Write-Warn($msg)  { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
+function Write-Info($message) { Write-Host "[INFO] $message" -ForegroundColor Cyan }
+function Write-OK($message) { Write-Host "[OK]   $message" -ForegroundColor Green }
+function Write-Warn($message) { Write-Host "[WARN] $message" -ForegroundColor Yellow }
+function Write-Err($message) { Write-Host "[ERR]  $message" -ForegroundColor Red }
 
-# ────────────────────────────────
-Write-Host "`n===============================" -ForegroundColor Blue
-Write-Host " MAKTABA PRINT WEB - START" -ForegroundColor Blue
-Write-Host "===============================`n" -ForegroundColor Blue
-
-# ===============================
-# Kill ports safely (NO netstat)
-# ===============================
-Write-Info "Cleaning ports 8000 / 5173..."
-
-foreach ($port in @(8000, 5173)) {
-    $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($listeners) {
-        $ownerIds = $listeners | Select-Object -ExpandProperty OwningProcess -Unique
-        foreach ($ownerId in $ownerIds) {
-            if (-not $ownerId -or $ownerId -eq 0 -or $ownerId -eq $PID) { continue }
-            try {
-                $ownerName = (Get-Process -Id $ownerId -ErrorAction SilentlyContinue).ProcessName
-                Stop-Process -Id $ownerId -Force -ErrorAction Stop
-                Write-OK "Stopped $ownerName (PID $ownerId) on port $port"
-            } catch {
-                Write-Warn "Cannot stop PID $ownerId on port $port"
-            }
-        }
+function Stop-ListeningPort([int]$Port) {
+    $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    foreach ($ownerId in @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)) {
+        if (-not $ownerId -or $ownerId -eq $PID) { continue }
+        Stop-Process -Id $ownerId -Force -ErrorAction SilentlyContinue
     }
-
-    # Windows can need a moment to release the listening socket.
     for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-        if (-not $remaining) { break }
+        if (-not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) { return $true }
         Start-Sleep -Milliseconds 250
     }
-    $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-    if ($remaining) {
-        $blockedBy = ($remaining | Select-Object -ExpandProperty OwningProcess -Unique) -join ", "
-        Write-Err "Port $port is still occupied by PID $blockedBy"
-        Write-Warn "Close the old application or restart Windows, then run start.ps1 again."
+    return -not [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+}
+
+function Get-BackendHealth {
+    try {
+        return Invoke-RestMethod "http://127.0.0.1:$BackendPort/health" -TimeoutSec 3
+    } catch { return $null }
+}
+
+function Test-FrontendHealth {
+    try {
+        $response = Invoke-WebRequest "http://127.0.0.1:5173" -UseBasicParsing -TimeoutSec 3
+        return $response.StatusCode -eq 200
+    } catch { return $false }
+}
+
+Write-Host "`n===============================" -ForegroundColor Blue
+Write-Host " LIBRARY SABRI - START" -ForegroundColor Blue
+Write-Host "===============================`n" -ForegroundColor Blue
+
+if (-not (Test-Path $VenvPython)) {
+    Write-Err "Python environment missing. Run setup.ps1 first."
+    exit 1
+}
+
+# Remove the temporary archive companion from older builds. Archives now use
+# the same authenticated backend and database connection on port 8010.
+if (-not (Stop-ListeningPort 8001)) {
+    Write-Warn "Old archive helper on port 8001 could not be stopped; it is no longer used."
+}
+
+$backendHealth = Get-BackendHealth
+$backendCurrent = $backendHealth -and ($backendHealth.capabilities -contains "document_archive")
+if ($ForceRestart -or -not $backendCurrent) {
+    if ($backendHealth) { Write-Info "Replacing an older backend build..." }
+    if (-not (Stop-ListeningPort $BackendPort)) {
+        Write-Err "Backend port $BackendPort could not be released."
         exit 1
     }
-}
 
-# ===============================
-# Check backend python
-# ===============================
-if (-not (Test-Path $VenvPython)) {
-    Write-Err "Python venv not found!"
-    Write-Warn "Run setup.ps1 first"
-    exit 1
-}
-
-# ===============================
-# Start Backend
-# ===============================
-Write-Info "Starting backend..."
-
-$RuntimeDir = Join-Path $ScriptDir ".runtime"
-New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
-$BackendOut = Join-Path $RuntimeDir "backend.out.log"
-$BackendErr = Join-Path $RuntimeDir "backend.err.log"
-Remove-Item -LiteralPath $BackendOut,$BackendErr -Force -ErrorAction SilentlyContinue
-
-$backendProc = Start-Process -FilePath $VenvPython `
-    -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers" `
-    -WorkingDirectory $BackendDir `
-    -RedirectStandardOutput $BackendOut `
-    -RedirectStandardError $BackendErr `
-    -WindowStyle Hidden `
-    -PassThru
-
-# ===============================
-# Health Check
-# ===============================
-Write-Info "Waiting backend health..."
-
-$ok = $false
-
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Seconds 2
-
-    if ($backendProc.HasExited) { break }
-    try {
-        # Use the explicit IPv4 loopback. Some Windows installations resolve
-        # localhost to ::1 while Uvicorn is listening on 0.0.0.0 (IPv4).
-        Invoke-WebRequest "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2 | Out-Null
-        $ok = $true
-        break
-    } catch {}
-}
-
-if (-not $ok) {
-    Write-Err "Backend failed to start"
-    if (Test-Path $BackendErr) {
-        Write-Host "`n--- Backend error details ---" -ForegroundColor Yellow
-        Get-Content -LiteralPath $BackendErr -Tail 35
-    }
-    if (Test-Path $BackendOut) {
-        Write-Host "`n--- Backend output ---" -ForegroundColor Yellow
-        Get-Content -LiteralPath $BackendOut -Tail 15
-    }
-    Write-Host "`nLogs: $BackendErr" -ForegroundColor Gray
-    exit 1
-}
-
-Write-OK "Backend running (PID $($backendProc.Id))"
-
-# ===============================
-# Start trusted HTTPS scanner tunnel
-# ===============================
-$cloudflaredProc = $null
-$BundledCloudflared = Join-Path $ScriptDir "tools\cloudflared.exe"
-$CloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
-$CloudflaredPath = if (Test-Path $BundledCloudflared) { $BundledCloudflared } elseif ($CloudflaredCommand) { $CloudflaredCommand.Source } else { $null }
-if ($CloudflaredPath) {
-    Write-Info "Starting HTTPS tunnel for live mobile scanner..."
-    $TunnelOut = Join-Path $RuntimeDir "scanner-tunnel.out.log"
-    $TunnelErr = Join-Path $RuntimeDir "scanner-tunnel.err.log"
-    Remove-Item -LiteralPath $TunnelOut,$TunnelErr -Force -ErrorAction SilentlyContinue
-    $cloudflaredProc = Start-Process -FilePath $CloudflaredPath `
-        -ArgumentList "tunnel", "--protocol", "http2", "--url", "http://127.0.0.1:8000", "--no-autoupdate" `
-        -RedirectStandardOutput $TunnelOut `
-        -RedirectStandardError $TunnelErr `
+    Write-Info "Starting unified backend..."
+    $BackendOut = Join-Path $RuntimeDir "backend.out.log"
+    $BackendErr = Join-Path $RuntimeDir "backend.err.log"
+    Remove-Item -LiteralPath $BackendOut,$BackendErr -Force -ErrorAction SilentlyContinue
+    $backendProc = Start-Process -FilePath $VenvPython `
+        -ArgumentList "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$BackendPort", "--no-proxy-headers" `
+        -WorkingDirectory $BackendDir `
+        -RedirectStandardOutput $BackendOut `
+        -RedirectStandardError $BackendErr `
         -WindowStyle Hidden `
         -PassThru
-    Write-OK "Mobile scanner HTTPS tunnel starting (PID $($cloudflaredProc.Id))"
+
+    $backendHealth = $null
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        Start-Sleep -Milliseconds 500
+        if ($backendProc.HasExited) { break }
+        $backendHealth = Get-BackendHealth
+        if ($backendHealth -and ($backendHealth.capabilities -contains "document_archive")) { break }
+    }
+    if (-not $backendHealth -or -not ($backendHealth.capabilities -contains "document_archive")) {
+        Write-Err "Unified backend failed to start."
+        if (Test-Path $BackendErr) { Get-Content $BackendErr -Tail 35 }
+        exit 1
+    }
+    Write-OK "Unified backend ready (PID $($backendProc.Id))"
 } else {
-    Write-Warn "cloudflared missing: mobile scanner will use photo mode on HTTP."
+    Write-OK "Unified backend already healthy"
 }
 
-# ===============================
-# Start Frontend
-# ===============================
-Write-Info "Starting frontend..."
-
-$frontendProc = Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c", "npm run dev -- --host 0.0.0.0" `
-    -WorkingDirectory $FrontendDir `
-    -WindowStyle Hidden `
-    -PassThru
-
-Start-Sleep 5
-
-# ===============================
-# Open Browser
-# ===============================
-Write-Info "Opening browser..."
-if (-not $NoBrowser) {
-    Start-Process "http://localhost:5173"
+$frontendHealthy = Test-FrontendHealth
+if ($ForceRestart -or -not $frontendHealthy) {
+    if (-not (Stop-ListeningPort 5173)) {
+        Write-Err "Frontend port 5173 could not be released."
+        exit 1
+    }
+    Write-Info "Starting frontend..."
+    $FrontendOut = Join-Path $RuntimeDir "frontend.out.log"
+    $FrontendErr = Join-Path $RuntimeDir "frontend.err.log"
+    Remove-Item -LiteralPath $FrontendOut,$FrontendErr -Force -ErrorAction SilentlyContinue
+    $frontendProc = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c", "npm run dev -- --host 0.0.0.0 --port 5173 --strictPort" `
+        -WorkingDirectory $FrontendDir `
+        -RedirectStandardOutput $FrontendOut `
+        -RedirectStandardError $FrontendErr `
+        -WindowStyle Hidden `
+        -PassThru
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        Start-Sleep -Milliseconds 400
+        if (Test-FrontendHealth) { break }
+    }
+    if (-not (Test-FrontendHealth)) {
+        Write-Err "Frontend failed to start."
+        if (Test-Path $FrontendErr) { Get-Content $FrontendErr -Tail 25 }
+        exit 1
+    }
+    Write-OK "Frontend ready (PID $($frontendProc.Id))"
+} else {
+    Write-OK "Frontend already healthy"
 }
 
-# ===============================
-# Summary
-# ===============================
+if (-not $NoBrowser) { Start-Process "http://localhost:5173" }
+
 $LanAddress = $null
 try {
-    $socket = New-Object System.Net.Sockets.UdpClient
+    $socket = [Net.Sockets.UdpClient]::new()
     $socket.Connect("8.8.8.8", 80)
-    $LanAddress = ($socket.Client.LocalEndPoint).Address.ToString()
-    $socket.Close()
-} catch {
-    $LanAddress = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -notlike "127.*" -and $_.PrefixOrigin -ne "WellKnown" } |
-        Select-Object -First 1 -ExpandProperty IPAddress)
-}
+    $LanAddress = $socket.Client.LocalEndPoint.Address.ToString()
+    $socket.Dispose()
+} catch {}
 
-Write-Host "`n===============================" -ForegroundColor Green
-Write-Host " MAKTABA PRINT RUNNING" -ForegroundColor Green
-Write-Host "===============================`n" -ForegroundColor Green
-Write-Host "  Lien sur ce PC : http://localhost:5173" -ForegroundColor Cyan
-if ($LanAddress) {
-    Write-Host "  Lien autre PC  : http://${LanAddress}:5173" -ForegroundColor Yellow
-    Write-Host "  (Les deux ordinateurs doivent etre sur le meme reseau.)" -ForegroundColor Gray
-}
-
-Write-Host "Frontend : http://localhost:5173"
-Write-Host "Backend  : http://localhost:8000"
-Write-Host "Docs     : http://localhost:8000/docs`n"
-
-Write-Host "Backend PID : $($backendProc.Id)"
-Write-Host "Frontend PID: $($frontendProc.Id)`n"
-
-Write-OK "Services started in background. This window can be closed."
+Write-Host "`n[OK] Library Sabri is running" -ForegroundColor Green
+Write-Host "Local:   http://localhost:5173" -ForegroundColor Cyan
+if ($LanAddress) { Write-Host "Network: http://${LanAddress}:5173" -ForegroundColor Yellow }
+Write-Host "API:     http://localhost:$BackendPort" -ForegroundColor Gray

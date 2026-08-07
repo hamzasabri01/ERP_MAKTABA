@@ -7,10 +7,10 @@ import logging
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from core.database import init_db
 from core.config import env_list
@@ -19,7 +19,7 @@ from api.routes import (
     auth, clients, products, categories, suppliers,
     sales, purchases, expenses, stock, reports,
     users, settings, cash, dashboard, backups, audit, notifications, search, payments, system, security_center,
-    mobile_scanner, printer
+    mobile_scanner, printer, research, document_scanner
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -35,8 +35,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Startup backup check failed")
     reports.start_report_email_scheduler()
+    mobile_scanner.start_tunnel_supervisor()
     logger.info("Maktaba Print backend started")
     yield
+    mobile_scanner.stop_tunnel_supervisor()
 
 
 app = FastAPI(
@@ -45,6 +47,21 @@ app = FastAPI(
     description="Gestion commerciale pour librairie, fournitures scolaires, copie et impression",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception):
+    """Always return predictable JSON while keeping technical details in server logs."""
+    logger.exception(
+        "Unhandled API error method=%s path=%s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erreur interne du serveur. Réessayez; si le problème persiste, consultez les journaux."},
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -101,6 +118,8 @@ app.include_router(payments.router,      prefix="/api/payments",   tags=["Paymen
 app.include_router(system.router,        prefix="/api/system",     tags=["System"], dependencies=[Depends(require_permission("settings"))])
 app.include_router(mobile_scanner.router, prefix="/api/mobile-scanner", tags=["Mobile Scanner"])
 app.include_router(printer.router, prefix="/api/printer", tags=["Printer"], dependencies=[Depends(require_permission("expenses"))])
+app.include_router(research.router, prefix="/api/research", tags=["School Research"])
+app.include_router(document_scanner.router, prefix="/api/document-scanner", tags=["Document Scanner"])
 
 # Serve uploaded images
 os.makedirs("uploads", exist_ok=True)
@@ -109,7 +128,11 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "version": "1.1.0",
+        "capabilities": ["document_archive", "mobile_scanner", "reports"],
+    }
 
 
 # In a local-server deployment, the remote PC can serve the built frontend and

@@ -217,6 +217,18 @@ def _ensure_unique_barcode(db: Session, barcode, exclude_id: int | None = None) 
     return normalized
 
 
+def _validate_product_references(db: Session, data: dict) -> None:
+    category_id = data.get("category_id")
+    supplier_id = data.get("supplier_id")
+    if category_id is not None and not db.query(Category.id).filter(Category.id == category_id).first():
+        raise HTTPException(400, "La catégorie sélectionnée est introuvable")
+    if supplier_id is not None and not db.query(Supplier.id).filter(
+        Supplier.id == supplier_id,
+        Supplier.is_active == 1,
+    ).first():
+        raise HTTPException(400, "Le fournisseur sélectionné est introuvable ou archivé")
+
+
 def _ean13_check_digit(first_twelve_digits: str) -> str:
     if len(first_twelve_digits) != 12 or not first_twelve_digits.isdigit():
         raise ValueError("EAN-13 requires exactly 12 digits before the check digit")
@@ -686,6 +698,7 @@ def delete_product_image(pid: int, db: Session = Depends(get_db), user=Depends(g
 @router.post("", response_model=ProductOut, status_code=201)
 def create_product(body: ProductCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
     data = body.model_dump()
+    _validate_product_references(db, data)
     data["barcode"] = _ensure_unique_barcode(db, data.get("barcode"))
     data["tax_rate"] = _validate_tax_rate(data.get("tax_rate", 0))
     if data.get("product_type") == "service":
@@ -735,6 +748,7 @@ def update_product(pid: int, body: ProductUpdate, db: Session = Depends(get_db),
         raise HTTPException(404, "Produit non trouvé")
     before = model_snapshot(p, ["code", "name", "purchase_price", "sale_price", "stock_quantity", "min_stock", "is_active", "product_type"])
     payload = body.model_dump(exclude_none=True, exclude={"code"})
+    _validate_product_references(db, payload)
     if "barcode" in payload:
         payload["barcode"] = _ensure_unique_barcode(db, payload.get("barcode"), exclude_id=pid)
     requested_type = payload.get("product_type", p.product_type)

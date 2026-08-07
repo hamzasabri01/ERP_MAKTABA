@@ -9,7 +9,7 @@ import './CashPage.css'
 
 export default function CashPage() {
   const { hasPermission } = useAuth()
-  const { language } = useI18n()
+  const { language, translate } = useI18n()
   const [current, setCurrent] = useState(null)
   const [sessions, setSessions] = useState([])
   const [transactions, setTransactions] = useState([])
@@ -151,36 +151,36 @@ export default function CashPage() {
     <div className="page-content cash-page">
       <section className={`cash-hero ${current ? 'open' : 'closed'}`}>
         <div>
-          <span className="cash-eyebrow">{current ? 'Session active' : 'Aucune session active'}</span>
-          <h1>Caisse</h1>
+          <span className="cash-eyebrow">{translate(current ? 'Session active' : 'Aucune session active')}</span>
+          <h1>{translate('Caisse')}</h1>
           <p>{current ? `Ouverte depuis ${cashAge} - ${fmtDateTime(current.opened_at)}` : 'Ouvrez une session pour enregistrer les mouvements de caisse.'}</p>
         </div>
         <div className="cash-actions">
           <button className="btn btn-secondary" onClick={() => load(true)} disabled={refreshing}>
-            <RefreshCw size={16} className={refreshing ? 'cash-spin' : ''} /> Actualiser
+            <RefreshCw size={16} className={refreshing ? 'cash-spin' : ''} /> {translate('Actualiser')}
           </button>
           {!current ? (
             <button className="btn btn-primary" onClick={openCash}><Wallet size={16} /> Ouvrir la caisse</button>
           ) : (
             <>
-              <button className="btn btn-success" onClick={() => openTransaction('in')}><ArrowDownCircle size={16} /> Entrée</button>
-              <button className="btn btn-danger" onClick={() => openTransaction('out')}><ArrowUpCircle size={16} /> Sortie</button>
-              <button className="btn btn-secondary" onClick={openClose}><Lock size={16} /> Clôturer</button>
+              <button className="btn btn-success" onClick={() => openTransaction('in')}><ArrowDownCircle size={16} /> {translate('Entrée')}</button>
+              <button className="btn btn-danger" onClick={() => openTransaction('out')}><ArrowUpCircle size={16} /> {translate('Sortie')}</button>
+              <button className="btn btn-secondary" onClick={openClose}><Lock size={16} /> {translate('Clôturer')}</button>
             </>
           )}
         </div>
       </section>
 
       <section className="cash-kpis">
-        <CashKpi tone="success" icon={WalletCards} label="Solde actuel" value={`${fmt(balance)} MAD`} sub={current ? 'Disponible en caisse' : 'Caisse fermée'} />
-        <CashKpi tone="accent" icon={Wallet} label="Fonds ouverture" value={`${fmt(current?.opening_balance || 0)} MAD`} sub="Base de session" />
-        <CashKpi tone="in" icon={ArrowDownCircle} label="Entrées" value={`${fmt(current?.total_in || 0)} MAD`} sub="Ventes et ajouts" />
-        <CashKpi tone="out" icon={ArrowUpCircle} label="Sorties" value={`${fmt(current?.total_out || 0)} MAD`} sub="Retraits et achats" />
+        <CashKpi tone="success" icon={WalletCards} label={translate('Solde actuel')} value={`${fmt(balance)} MAD`} sub={translate(current ? 'Disponible en caisse' : 'Caisse fermée')} />
+        <CashKpi tone="accent" icon={Wallet} label={translate('Fonds ouverture')} value={`${fmt(current?.opening_balance || 0)} MAD`} sub={translate('Base de session')} />
+        <CashKpi tone="in" icon={ArrowDownCircle} label={translate('Entrées')} value={`${fmt(current?.total_in || 0)} MAD`} sub={translate('Ventes et ajouts')} />
+        <CashKpi tone="out" icon={ArrowUpCircle} label={translate('Sorties')} value={`${fmt(current?.total_out || 0)} MAD`} sub={translate('Retraits et achats')} />
       </section>
 
       <section className="cash-integrity-grid">
         <IntegrityCard
-          title="Rapprochement caisse"
+          title={translate('Rapprochement caisse')}
           ok={reconciliation?.ok}
           detail={reconciliation
             ? language === 'ar'
@@ -189,11 +189,11 @@ export default function CashPage() {
             : 'Vérification...'}
         />
         <IntegrityCard
-          title="Rapprochement crédit"
+          title={translate('Rapprochement crédit')}
           ok={creditReconciliation?.ok}
           detail={creditReconciliation
-            ? `${creditReconciliation.client_count} client(s) · ${creditReconciliation.mismatch_count} écart(s)`
-            : 'Vérification...'}
+            ? language === 'ar' ? `${creditReconciliation.client_count} عميل · ${creditReconciliation.mismatch_count} فرق` : `${creditReconciliation.client_count} client(s) · ${creditReconciliation.mismatch_count} écart(s)`
+            : translate('Vérification...')}
         />
       </section>
 
