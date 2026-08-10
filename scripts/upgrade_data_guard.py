@@ -105,11 +105,15 @@ def main() -> None:
     else:
         result = snapshot(args.database)
 
+    # Keep the file human-readable in UTF-8, but never send raw non-ASCII paths
+    # to the Windows console. Older/default Windows code pages (for example
+    # cp1252) cannot encode Arabic user-profile names and used to abort an
+    # otherwise successful backup with UnicodeEncodeError.
     payload = json.dumps(result, ensure_ascii=False, indent=2)
     if args.action == "snapshot" and args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(payload, encoding="utf-8")
-    print(payload)
+    print(json.dumps(result, ensure_ascii=True, indent=2))
 
 
 if __name__ == "__main__":

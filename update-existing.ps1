@@ -7,6 +7,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $ScriptDir "backend"
 $Database = Join-Path $BackendDir "proerp.db"
