@@ -53,15 +53,13 @@ Set-Location $ScriptDir
 if (-not (Test-Path ".git")) { throw "Ce dossier n'est pas une installation Git." }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git est introuvable." }
 if (-not (Test-Path $Database)) { throw "Base de donnees introuvable: $Database" }
-if (-not (Test-Path $Guard)) {
-    Info "Recuperation de l'outil de protection des donnees..."
-    git fetch $Remote $Branch --quiet
-    if ($LASTEXITCODE -ne 0) { throw "Impossible de preparer l'outil de sauvegarde." }
-    $guardSource = git show "${Remote}/${Branch}:scripts/upgrade_data_guard.py"
-    if ($LASTEXITCODE -ne 0 -or -not $guardSource) { throw "Outil de protection des donnees introuvable dans la nouvelle version." }
-    New-Item -ItemType Directory -Path (Split-Path -Parent $Guard) -Force | Out-Null
-    [IO.File]::WriteAllLines($Guard, [string[]]$guardSource, [Text.UTF8Encoding]::new($false))
-}
+Info "Recuperation de l'outil de protection des donnees..."
+git fetch $Remote $Branch --quiet
+if ($LASTEXITCODE -ne 0) { throw "Impossible de preparer l'outil de sauvegarde." }
+$guardSource = git show "${Remote}/${Branch}:scripts/upgrade_data_guard.py"
+if ($LASTEXITCODE -ne 0 -or -not $guardSource) { throw "Outil de protection des donnees introuvable dans la nouvelle version." }
+New-Item -ItemType Directory -Path (Split-Path -Parent $Guard) -Force | Out-Null
+[IO.File]::WriteAllLines($Guard, [string[]]$guardSource, [Text.UTF8Encoding]::new($false))
 
 New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 $OldCommit = (git rev-parse HEAD).Trim()
