@@ -1050,16 +1050,81 @@
 
 .pos-product .pos-product-dual-price {
   width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: .35rem;
-  padding: .28rem .35rem;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg3));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: stretch;
+  gap: .3rem;
+  padding: .34rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg2));
+  overflow: hidden;
 }
-.pos-product .pos-product-dual-price b { color: var(--accent); font-size: .7rem; white-space: nowrap; }
-.pos-product .pos-product-dual-price small { margin: 0; color: var(--text3); font-size: .57rem; font-weight: 650; }
+
+.pos-product .pos-product-dual-price > i {
+  width: 1px;
+  min-height: 34px;
+  align-self: center;
+  background: color-mix(in srgb, var(--accent) 18%, var(--border));
+}
+
+.pos-product .pos-price-option {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  column-gap: .16rem;
+  text-align: start;
+}
+
+.pos-product .pos-price-option small {
+  grid-column: 1 / -1;
+  margin: 0 0 .08rem;
+  overflow: hidden;
+  color: var(--text3);
+  font-size: .55rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-product .pos-price-option b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-product .pos-price-option em {
+  align-self: end;
+  color: var(--text3);
+  font-size: .52rem;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.pos-product .pos-product-stock {
+  width: 100%;
+  overflow: hidden;
+  padding: .1rem .22rem;
+  border-radius: 5px;
+  background: color-mix(in srgb, #16a34a 5%, transparent);
+  color: color-mix(in srgb, #15803d 78%, var(--text2));
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-product .pos-product-stock.stock-low {
+  background: color-mix(in srgb, #ef4444 7%, transparent);
+}
 
 .pos-product small {
   font-size: .68rem;

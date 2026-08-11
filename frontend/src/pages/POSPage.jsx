@@ -832,13 +832,22 @@ export default function POSPage() {
                     <strong>{p.name}</strong>
                     {secondarySaleEnabled(p) ? (
                       <span className="pos-product-dual-price">
-                        <b>{fmt(p.sale_price)} {currency}<small> / {p.unit || 'pcs'}</small></b>
-                        <b>{fmt(p.sale_unit_price)} {currency}<small> / {p.sale_unit}</small></b>
+                        <span className="pos-price-option">
+                          <small>À l’unité</small>
+                          <b>{fmt(p.sale_price)} {currency}</b>
+                          <em>/{p.unit || 'pcs'}</em>
+                        </span>
+                        <i aria-hidden="true" />
+                        <span className="pos-price-option is-package">
+                          <small>Par {p.sale_unit}</small>
+                          <b>{fmt(p.sale_unit_price)} {currency}</b>
+                          <em>/{p.sale_unit}</em>
+                        </span>
                       </span>
                     ) : <span>{fmt(p.sale_price)} {currency}</span>}
                     {p.product_type === 'service'
                       ? <small className="service-hint">{p.pricing_mode === 'manual' ? 'Prix à saisir' : 'Sans stock'}</small>
-                      : <small className={p.is_low_stock ? 'stock-low' : ''}>
+                      : <small className={`pos-product-stock ${p.is_low_stock ? 'stock-low' : ''}`}>
                           {p.product_type === 'bundle' ? `Packs disponibles: ${fmt(p.stock_quantity, 0)}` : `Stock: ${stockLabel(p)}`}
                         </small>}
                     {p.updated_at && <small>Maj: {fmtDateTime(p.updated_at)}</small>}
