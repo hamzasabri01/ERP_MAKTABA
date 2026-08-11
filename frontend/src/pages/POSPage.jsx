@@ -15,6 +15,7 @@ import { useI18n } from '../lib/i18n'
 import ThermalReceipt, { printThermalReceipt, ThermalReceiptPrintDocument } from '../components/print/ThermalReceipt'
 import './POSPage.css'
 import { storageGet, storageJson, storageRemove, storageSet } from '../lib/safeStorage'
+import { playSound } from '../lib/soundFeedback'
 
 const HELD_KEY = 'proerp_pos_held_cart'
 const DRAFT_KEY = 'maktaba_pos_active_draft_v1'
@@ -359,9 +360,11 @@ export default function POSPage() {
     }
     const available = Math.max(0, toNumber(product.stock_quantity))
     if (['product', 'bundle'].includes(product.product_type) && available <= 0) {
+      playSound('error')
       toast.error('Stock insuffisant')
       return
     }
+    playSound(configured ? 'add' : 'click')
     setCart(prev => {
       const found = prev.find(i => i.product_id === product.id)
       if (found) {
@@ -477,9 +480,11 @@ export default function POSPage() {
           )
           if (product) {
             addProduct(product)
+            playSound('scan', { bypassThrottle:true })
             toast.success(`${product.name} ajouté depuis le téléphone`, { icon: '📱' })
           } else {
             setQuery(event.barcode)
+            playSound('error', { bypassThrottle:true })
             toast.error(`Code ${event.barcode} introuvable dans le catalogue`)
           }
         }
@@ -516,6 +521,7 @@ export default function POSPage() {
     )
     if (exact) {
       addProduct(exact)
+      playSound('scan', { bypassThrottle:true })
       setQuery('')
       return
     }
@@ -685,8 +691,10 @@ export default function POSPage() {
       storageRemove(HELD_KEY)
       setCheckoutOpen(false)
       await load()
+      playSound('payment', { bypassThrottle:true })
       toast.success(`Ticket ${paid.data.number} encaissé`)
     } catch (e) {
+      playSound('error', { bypassThrottle:true })
       if (createdSale && !confirmedSale) {
         try {
           const { data: currentSale } = await api.get(`/sales/${createdSale.id}`)

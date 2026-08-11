@@ -8,6 +8,7 @@ import { getLogoUrl } from '../../lib/brand'
 import { applyVisualIdentity } from '../../lib/visualIdentity'
 import { useI18n } from '../../lib/i18n'
 import { storageJson, storageSet } from '../../lib/safeStorage'
+import { playSound, setSoundsEnabled, soundsEnabled, subscribeSoundSetting } from '../../lib/soundFeedback'
 import CommandPalette from './CommandPalette'
 import { useConfirm } from '../ui/ConfirmDialog'
 import toast from 'react-hot-toast'
@@ -16,7 +17,7 @@ import {
   TrendingDown, BarChart2, Settings, LogOut, ChevronDown,
   Wallet, UserCheck, Menu, X, Archive, ScanLine, UserCog, LogIn,
   Sun, Moon, Bell, Search, ShieldCheck, Printer, ScanText, PanelLeftClose, PanelLeftOpen
-  , CheckCheck, RefreshCw, AlertTriangle, PackageX, GraduationCap
+  , CheckCheck, RefreshCw, AlertTriangle, PackageX, GraduationCap, Volume2, VolumeX
 } from 'lucide-react'
 import './Layout.css'
 
@@ -149,6 +150,7 @@ export default function Layout() {
     catch { return [] }
   })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [soundOn, setSoundOn] = useState(() => soundsEnabled())
   const [commandOpen, setCommandOpen] = useState(false)
   const [researchEnabled, setResearchEnabled] = useState(false)
   const [navTooltip, setNavTooltip] = useState(null)
@@ -156,6 +158,8 @@ export default function Layout() {
   const notificationsRef = useRef(null)
   const knownNotificationsRef = useRef(null)
   const notificationRefreshRef = useRef(null)
+
+  useEffect(() => subscribeSoundSetting(setSoundOn), [])
 
   const visibleNav = useMemo(
     () => NAV_ITEMS.filter(item => hasPermission(item.permission) && (!item.feature || (item.feature === 'research' && researchEnabled))),
@@ -244,6 +248,7 @@ export default function Layout() {
           && !knownNotificationsRef.current.has(notificationKey(item))
         )
         if (freshStockAlert) {
+          playSound(freshStockAlert.level === 'danger' ? 'warning' : 'notification')
           const StockToastIcon = freshStockAlert.level === 'danger' ? PackageX : AlertTriangle
           toast.custom(currentToast => (
             <button
@@ -771,6 +776,19 @@ export default function Layout() {
               <i className="theme-star theme-star-one">✦</i>
               <i className="theme-star theme-star-two">•</i>
             </span>
+          </button>
+          <button
+            type="button"
+            className={`btn btn-secondary btn-icon sound-toggle-btn${soundOn ? ' is-on' : ' is-muted'}`}
+            onClick={() => setSoundsEnabled(!soundOn)}
+            aria-label={language === 'ar'
+              ? (soundOn ? 'كتم أصوات التطبيق' : 'تشغيل أصوات التطبيق')
+              : (soundOn ? "Couper les sons de l’application" : "Activer les sons de l’application")}
+            aria-pressed={soundOn}
+            title={language === 'ar' ? (soundOn ? 'الأصوات مفعلة' : 'الأصوات مكتومة') : (soundOn ? 'Sons activés' : 'Sons coupés')}
+            data-sound="none"
+          >
+            {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
           </button>
           <div className="topbar-notifications" ref={notificationsRef}>
             <button

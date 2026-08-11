@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage'
 import { PageLoader } from './components/ui/LoadingStates'
 import { ConfirmProvider } from './components/ui/ConfirmDialog'
 import AppErrorBoundary from './components/ui/AppErrorBoundary'
+import { installUiSoundFeedback, playSound } from './lib/soundFeedback'
 
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const ClientsPage = lazy(() => import('./pages/ClientsPage'))
@@ -104,6 +105,7 @@ function RuntimeErrorReporter() {
       const reason = event.reason
       if (reason?.code === 'ERR_CANCELED' || reason?.name === 'AbortError') return
       console.error('Unhandled application rejection', reason)
+      playSound('error')
       toast.error('Une opération a échoué. Réessayez ou rechargez la page.')
       event.preventDefault()
     }
@@ -120,6 +122,11 @@ function RuntimeErrorReporter() {
   return null
 }
 
+function SoundFeedbackRuntime() {
+  useEffect(() => installUiSoundFeedback(), [])
+  return null
+}
+
 export default function App() {
   const basename = window.location.pathname.startsWith('/erp') ? '/erp' : undefined
 
@@ -128,6 +135,7 @@ export default function App() {
       <ThemeProvider>
         <I18nProvider>
           <AuthProvider>
+            <SoundFeedbackRuntime />
             <ConfirmProvider>
               <BrowserRouter basename={basename}>
                 <Suspense fallback={<PageLoader title="Chargement" detail="Preparation de la page..." />}>

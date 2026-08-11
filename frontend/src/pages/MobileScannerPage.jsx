@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Barcode, Camera, CameraOff, CheckCircle2, Keyboard, Send, Wifi } from 'lucide-react'
 import { BrowserMultiFormatReader } from '@zxing/browser'
 import './MobileScannerPage.css'
+import { playSound } from '../lib/soundFeedback'
 
 const API_ROOT = '/api/mobile-scanner'
 
@@ -34,9 +35,11 @@ export default function MobileScannerPage() {
       setLastCode(barcode)
       setStatus('success')
       setMessage(`Code ${barcode} envoyé au POS`)
+      playSound('scan', { bypassThrottle:true })
       navigator.vibrate?.([55, 45, 90])
       setTimeout(() => setStatus('ready'), 900)
     } catch (error) {
+      playSound('error')
       setStatus('error')
       setMessage(error.message || 'Connexion perdue')
     }

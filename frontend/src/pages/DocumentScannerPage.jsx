@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { useConfirm } from '../components/ui/ConfirmDialog'
 import { api } from '../lib/api'
 import { autoDetectDocumentCorners, defaultDocumentCorners, filterDocument, perspectiveDocument, rotateDocument, suggestDocumentAdjustments, validateDocumentCorners } from '../lib/documentScan'
+import { playSound } from '../lib/soundFeedback'
 import './DocumentScannerPage.css'
 
 const FILTERS = [
@@ -352,6 +353,7 @@ export default function DocumentScannerPage() {
       const nextPages = [...pages, ...additions]
       setPages(nextPages)
       activatePage(nextPages[firstIndex], firstIndex)
+      playSound('add')
       toast.success(`${additions.length} page(s) ajoutée(s) · contours détectés`)
       if (duplicateCount) toast(`${duplicateCount} doublon(s) ignoré(s)`)
       if (rejected) toast.error(`${rejected} fichier(s) non valide(s) ignoré(s)`)
@@ -500,8 +502,10 @@ export default function DocumentScannerPage() {
       correctedRef.current = perspectiveDocument(sourceRef.current, corners, { formatMode, maxDimension: 3200 })
       resultRef.current = filterDocument(correctedRef.current, filter, brightness, contrast)
       setStep('preview')
+      playSound('scan', { bypassThrottle:true })
       toast.success('Document redressé avec succès')
     } catch (error) {
+      playSound('error')
       toast.error(error.message || 'Les coins sélectionnés sont invalides')
     } finally {
       setProcessing(false)
@@ -534,8 +538,10 @@ export default function DocumentScannerPage() {
       }
       setPages(next)
       activatePage(next[activeIndex < 0 ? 0 : activeIndex], activeIndex < 0 ? 0 : activeIndex)
+      playSound('scan', { bypassThrottle:true })
       toast.success(`${next.length} page(s) scannée(s) avec succès`)
     } catch (error) {
+      playSound('error')
       toast.error(error.message || 'Traitement groupé impossible')
     } finally {
       setProcessing(false)
@@ -651,6 +657,7 @@ export default function DocumentScannerPage() {
       const downloadedCount = chosen.length
       setPdfPreviewOpen(false)
       reset()
+      playSound('success', { bypassThrottle:true })
       toast.success(`PDF créé avec ${downloadedCount} page(s) · mémoire du scanner libérée`)
     } catch (error) {
       toast.error(error.message || 'Création du PDF impossible')
