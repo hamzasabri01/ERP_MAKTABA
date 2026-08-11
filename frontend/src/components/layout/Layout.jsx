@@ -780,7 +780,12 @@ export default function Layout() {
           <button
             type="button"
             className={`btn btn-secondary btn-icon sound-toggle-btn${soundOn ? ' is-on' : ' is-muted'}`}
-            onClick={() => setSoundsEnabled(!soundOn)}
+            onClick={() => {
+              const enabled = setSoundsEnabled(!soundOn)
+              toast(enabled
+                ? (language === 'ar' ? 'تم تشغيل أصوات التطبيق' : 'Sons de l’application activés')
+                : (language === 'ar' ? 'تم كتم أصوات التطبيق' : 'Sons de l’application coupés'))
+            }}
             aria-label={language === 'ar'
               ? (soundOn ? 'كتم أصوات التطبيق' : 'تشغيل أصوات التطبيق')
               : (soundOn ? "Couper les sons de l’application" : "Activer les sons de l’application")}

@@ -7,14 +7,14 @@ let lastPlayedAt = 0
 let removeUnlockListeners = null
 
 const patterns = {
-  click: [[520, .035, .035, 'sine', .055]],
-  add: [[520, .045, .025, 'sine', .07], [720, .055, .02, 'sine', .065]],
-  scan: [[880, .045, .015, 'square', .055], [1320, .07, .02, 'sine', .075]],
-  notification: [[660, .08, .02, 'sine', .07], [880, .1, .035, 'sine', .08]],
-  warning: [[440, .1, .025, 'triangle', .075], [350, .12, .04, 'triangle', .07]],
-  error: [[260, .105, .025, 'sawtooth', .065], [190, .16, .04, 'triangle', .065]],
-  success: [[523, .07, .025, 'sine', .07], [659, .08, .02, 'sine', .075], [784, .13, .035, 'sine', .085]],
-  payment: [[523, .065, .02, 'sine', .075], [659, .075, .02, 'sine', .08], [988, .17, .04, 'triangle', .095]],
+  click: [[520, .045, .025, 'sine', .11]],
+  add: [[520, .055, .02, 'sine', .13], [720, .075, .02, 'sine', .12]],
+  scan: [[880, .055, .012, 'square', .105], [1320, .095, .02, 'sine', .14]],
+  notification: [[660, .1, .02, 'sine', .13], [880, .14, .035, 'sine', .15]],
+  warning: [[440, .12, .025, 'triangle', .14], [350, .16, .04, 'triangle', .13]],
+  error: [[260, .13, .025, 'sawtooth', .12], [190, .2, .04, 'triangle', .13]],
+  success: [[523, .085, .02, 'sine', .13], [659, .1, .02, 'sine', .14], [784, .17, .035, 'sine', .16]],
+  payment: [[523, .08, .02, 'sine', .14], [659, .1, .02, 'sine', .15], [988, .22, .04, 'triangle', .18]],
 }
 
 export function soundsEnabled() {
@@ -28,7 +28,7 @@ export function setSoundsEnabled(enabled) {
   window.dispatchEvent(new CustomEvent(SOUND_EVENT, { detail:next }))
   if (next) {
     unlockAudio()
-    window.setTimeout(() => playSound('success', { bypassThrottle:true }), 30)
+    window.setTimeout(() => playSound('success', { bypassThrottle:true }), 80)
   }
   return next
 }
@@ -46,7 +46,7 @@ function getAudioContext() {
   if (!audioContext || audioContext.state === 'closed') {
     audioContext = new AudioContext()
     masterGain = audioContext.createGain()
-    masterGain.gain.value = .72
+    masterGain.gain.value = .92
     masterGain.connect(audioContext.destination)
   }
   return audioContext
@@ -65,25 +65,29 @@ export function playSound(name = 'click', options = {}) {
   const throttle = name === 'click' ? 65 : 120
   if (!options.bypassThrottle && nowMs - lastPlayedAt < throttle) return false
 
-  const context = unlockAudio()
-  if (!context || context.state !== 'running') return false
+  const context = getAudioContext()
+  if (!context) return false
   lastPlayedAt = nowMs
-  let offset = 0
-  pattern.forEach(([frequency, duration, gap, type, volume]) => {
-    const start = context.currentTime + offset
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
-    oscillator.type = type
-    oscillator.frequency.setValueAtTime(frequency, start)
-    gain.gain.setValueAtTime(.0001, start)
-    gain.gain.exponentialRampToValueAtTime(volume, start + .008)
-    gain.gain.exponentialRampToValueAtTime(.0001, start + duration)
-    oscillator.connect(gain)
-    gain.connect(masterGain)
-    oscillator.start(start)
-    oscillator.stop(start + duration + .02)
-    offset += duration + gap
-  })
+  const emit = () => {
+    let offset = 0
+    pattern.forEach(([frequency, duration, gap, type, volume]) => {
+      const start = context.currentTime + .008 + offset
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = type
+      oscillator.frequency.setValueAtTime(frequency, start)
+      gain.gain.setValueAtTime(.0001, start)
+      gain.gain.exponentialRampToValueAtTime(volume, start + .008)
+      gain.gain.exponentialRampToValueAtTime(.0001, start + duration)
+      oscillator.connect(gain)
+      gain.connect(masterGain)
+      oscillator.start(start)
+      oscillator.stop(start + duration + .025)
+      offset += duration + gap
+    })
+  }
+  if (context.state === 'running') emit()
+  else context.resume().then(emit).catch(() => {})
   return true
 }
 
