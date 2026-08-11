@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
-  Banknote, Barcode, Boxes, Calculator, CheckCircle2, CreditCard, Minus, Package, Pause, Plus,
+  Banknote, Barcode, Boxes, Calculator, CheckCircle2, Clock3, CreditCard, Minus, Package, Pause, Plus,
   Printer, Receipt, RotateCcw, Search, ShoppingBag, Smartphone, Sparkles, Trash2, User, Wifi, X
 } from 'lucide-react'
 import QRCode from 'qrcode'
@@ -848,9 +848,10 @@ export default function POSPage() {
                     {p.product_type === 'service'
                       ? <small className="service-hint">{p.pricing_mode === 'manual' ? 'Prix à saisir' : 'Sans stock'}</small>
                       : <small className={`pos-product-stock ${p.is_low_stock ? 'stock-low' : ''}`}>
-                          {p.product_type === 'bundle' ? `Packs disponibles: ${fmt(p.stock_quantity, 0)}` : `Stock: ${stockLabel(p)}`}
+                          <Package size={14} aria-hidden="true" />
+                          <span>{p.product_type === 'bundle' ? `Packs disponibles: ${fmt(p.stock_quantity, 0)}` : `Stock: ${stockLabel(p)}`}</span>
                         </small>}
-                    {p.updated_at && <small>Maj: {fmtDateTime(p.updated_at)}</small>}
+                    {p.updated_at && <small className="pos-product-updated"><Clock3 size={13} aria-hidden="true" /> <span>Maj: {fmtDateTime(p.updated_at)}</span></small>}
                   </button>
                 )})}
               </div>
