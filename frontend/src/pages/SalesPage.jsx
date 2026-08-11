@@ -29,7 +29,7 @@ const DOC_TITLES = {
 
 const STATUS_LABELS = { draft:'Brouillon', confirmed:'Confirmé', partially_paid:'Partiellement payé', paid:'Payé', cancelled:'Annulé' }
 const EMPTY_SALE = { doc_type:'invoice', client_id:'', date_time:'', notes:'', discount:0, payment_mode:'cash', paid_amount:0, items:[] }
-const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, purchase_price:0, discount:0, tax_rate:20 }
+const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, purchase_price:0, discount:0, tax_rate:20, sale_unit:'' }
 const PAGE_SIZE = 80
 
 const localIsoDate = value => {
@@ -235,6 +235,12 @@ export default function SalesPage() {
         discount: item.discount,
         tax_rate: item.tax_rate,
         product_type: products.find(product => product.id === item.product_id)?.product_type,
+        sale_unit: item.sale_unit || products.find(product => product.id === item.product_id)?.unit || 'pcs',
+        base_unit: products.find(product => product.id === item.product_id)?.unit || 'pcs',
+        secondary_unit: products.find(product => product.id === item.product_id)?.sale_unit || '',
+        secondary_factor: Number(products.find(product => product.id === item.product_id)?.sale_to_base_factor || 1),
+        secondary_price: Number(products.find(product => product.id === item.product_id)?.sale_unit_price || 0),
+        base_price: Number(products.find(product => product.id === item.product_id)?.sale_price || item.unit_price || 0),
       }))
       setForm({
         doc_type: sale.doc_type,
@@ -296,6 +302,7 @@ export default function SalesPage() {
           sale_item_id:item.id,
           name:item.product_name || item.description,
           max:item.quantity,
+          sale_unit:item.sale_unit || product?.unit || 'pcs',
           quantity:0,
           condition:'resalable',
           restock:product?.product_type !== 'service',
@@ -480,7 +487,18 @@ export default function SalesPage() {
     items[i] = { ...items[i], [key]: val }
     if (key === 'product_id' && val) {
       const p = products.find(p => p.id === +val)
-      if (p) { items[i].unit_price = p.sale_price; items[i].purchase_price = p.purchase_price; items[i].tax_rate = vatEnabled ? p.tax_rate : 0; items[i].description = p.name }
+      if (p) {
+        items[i].unit_price = p.sale_price
+        items[i].purchase_price = p.purchase_price
+        items[i].tax_rate = vatEnabled ? p.tax_rate : 0
+        items[i].description = p.name
+        items[i].sale_unit = p.unit || 'pcs'
+        items[i].base_unit = p.unit || 'pcs'
+        items[i].secondary_unit = p.sale_unit || ''
+        items[i].secondary_factor = Number(p.sale_to_base_factor || 1)
+        items[i].secondary_price = Number(p.sale_unit_price || 0)
+        items[i].base_price = Number(p.sale_price || 0)
+      }
     }
     return { ...f, items }
   })
@@ -514,6 +532,17 @@ export default function SalesPage() {
     }
     updateItem(index, 'product_id', value)
   }
+
+  const selectLineUnit = (index, value) => setForm(current => ({
+    ...current,
+    items: current.items.map((item, itemIndex) => itemIndex !== index ? item : {
+      ...item,
+      sale_unit: value,
+      unit_price: value === item.secondary_unit ? item.secondary_price : item.base_price,
+      purchase_price: Number(products.find(product => product.id === Number(item.product_id))?.purchase_price || 0)
+        * (value === item.secondary_unit ? Number(item.secondary_factor || 1) : 1),
+    }),
+  }))
 
   const commitServiceLine = () => {
     const quantity = Number(serviceLineDraft?.quantity)
@@ -802,6 +831,7 @@ export default function SalesPage() {
                   <table className="sales-lines-table">
                     <thead><tr>
                       <th>Produit</th>
+                      <th>Unité</th>
                       <th>Qté</th>
                       <th>Prix unit. HT</th>
                       <th>Remise %</th>
@@ -818,6 +848,14 @@ export default function SalesPage() {
                               <select value={item.product_id||''} onChange={e => selectLineProduct(i, e.target.value)}>
                                 <option value="">— Produit —</option>
                                 {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <select aria-label="Unité de vente" value={item.sale_unit || item.base_unit || ''} disabled={!item.product_id || !item.secondary_unit} onChange={event => selectLineUnit(i, event.target.value)}>
+                                <option value={item.base_unit || item.sale_unit || 'pcs'}>{item.base_unit || item.sale_unit || 'pcs'}</option>
+                                {item.secondary_unit && Number(item.secondary_factor) > 1 && Number(item.secondary_price) > 0
+                                  ? <option value={item.secondary_unit}>{item.secondary_unit} ({fmt(item.secondary_factor, 0)} {item.base_unit})</option>
+                                  : null}
                               </select>
                             </td>
                             <td className="sales-line-quantity"><input
@@ -1052,7 +1090,7 @@ export default function SalesPage() {
                 <table><thead><tr><th>Article</th><th>Vendu</th><th>À retourner</th><th>État</th><th>Stock</th></tr></thead>
                   <tbody>{returnForm.items.map((item, index) => (
                     <tr key={item.sale_item_id}>
-                      <td>{item.name}</td><td>{item.max}</td>
+                      <td>{item.name}</td><td>{item.max} {item.sale_unit}</td>
                       <td><input type="number" min="0" max={item.max} step="1" value={item.quantity} onChange={e => setReturnForm(f => ({ ...f, items:f.items.map((row, i) => i === index ? { ...row, quantity:e.target.value } : row) }))} /></td>
                       <td>
                         <select
@@ -1201,7 +1239,7 @@ function buildSalesDocumentHtml(sale, settings) {
   const rows = (sale.items || []).map(item => `
     <tr>
       <td>${escapeHtml(item.product_name || item.description)}</td>
-      <td>${fmt(item.quantity, 0)}</td>
+      <td>${fmt(item.quantity, 0)} ${escapeHtml(item.sale_unit || '')}</td>
       <td>${fmt(item.unit_price)} ${currency}</td>
       <td>${fmt(item.discount)}%</td>
       ${vatEnabled ? `<td>${fmt(item.tax_rate)}%</td>` : ''}
@@ -1290,7 +1328,7 @@ function PrintableSalesDocument({ sale, settings }) {
             {sale.items.map(item => (
               <tr key={item.id}>
                 <td>{item.product_name || item.description}</td>
-                <td>{fmt(item.quantity, 0)}</td>
+                <td>{fmt(item.quantity, 0)} {item.sale_unit || ''}</td>
                 <td>{fmt(item.unit_price)} {currency}</td>
                 <td>{fmt(item.discount)}%</td>
                 {vatEnabled ? <td>{fmt(item.tax_rate)}%</td> : null}

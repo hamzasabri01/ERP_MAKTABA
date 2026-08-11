@@ -50,7 +50,26 @@ def resolve_sale_items(db: Session, user, items: list[dict]) -> tuple[list[dict]
         if not product or not product.is_active:
             raise HTTPException(400, f"Produit introuvable ou inactif à la ligne {index + 1}")
 
-        catalog_price = quantize_price(product.sale_price or 0)
+        requested_unit = str(item.get("sale_unit") or product.unit or "pcs").strip()
+        secondary_enabled = bool(
+            product.product_type == "product"
+            and (product.sale_unit or "").strip()
+            and Decimal(str(product.sale_to_base_factor or 1)) > 1
+            and Decimal(str(product.sale_unit_price or 0)) > 0
+        )
+        allowed_units = {str(product.unit or "pcs").strip()}
+        if secondary_enabled:
+            allowed_units.add(str(product.sale_unit).strip())
+        if requested_unit not in allowed_units:
+            raise HTTPException(400, f"Unité de vente invalide pour {product.name}")
+        if secondary_enabled and requested_unit == (product.sale_unit or "").strip():
+            conversion_factor = Decimal(str(product.sale_to_base_factor or 1))
+            catalog_price = quantize_price(product.sale_unit_price or 0)
+            authoritative_unit = (product.sale_unit or "").strip()
+        else:
+            conversion_factor = Decimal("1")
+            catalog_price = quantize_price(product.sale_price or 0)
+            authoritative_unit = product.unit or "pcs"
         requested_price = quantize_price(item.get("unit_price", catalog_price))
         quantity = Decimal(str(item.get("quantity", 0)))
         if product.product_type in {"product", "bundle"} and not product.allow_fractional_sale:
@@ -81,8 +100,11 @@ def resolve_sale_items(db: Session, user, items: list[dict]) -> tuple[list[dict]
             "catalog_unit_price": catalog_price,
             "price_overridden": overridden,
             "price_override_reason": reason,
-            "purchase_price": quantize_price(product.purchase_price or 0),
+            "purchase_price": quantize_price((product.purchase_price or 0) * conversion_factor),
             "tax_rate": product.tax_rate if product.tva_enabled else Decimal("0"),
+            "sale_unit": authoritative_unit,
+            "conversion_factor": conversion_factor,
+            "base_quantity": quantity * conversion_factor,
         })
         normalized.append(item)
         if overridden:

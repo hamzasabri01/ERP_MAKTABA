@@ -55,6 +55,9 @@ class Product(Base):
     purchase_unit  = Column(String(20), default="pcs")
     purchase_to_base_factor = Column(Numeric(18, 4), nullable=False, default=1)
     allow_fractional_sale = Column(Boolean, nullable=False, default=False)
+    sale_unit      = Column(String(20), default="")
+    sale_to_base_factor = Column(Numeric(18, 4), nullable=False, default=1)
+    sale_unit_price = Column(Numeric(18, 4), nullable=False, default=0)
     tax_rate       = Column(Numeric(7, 4), default=20)
     tva_enabled    = Column(Integer, default=1)
     product_type   = Column(String(20), default="product")  # "product" | "service"

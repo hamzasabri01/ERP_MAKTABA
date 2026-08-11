@@ -92,7 +92,7 @@ def _stock_targets(item: SaleItem) -> list[tuple[Product, object, str]]:
     if not product:
         return []
     if product.product_type == "product":
-        return [(product, item.quantity or 0, f"item:{item.id}")]
+        return [(product, item.base_quantity or item.quantity or 0, f"item:{item.id}")]
     if product.product_type == "bundle":
         if not product.bundle_components:
             raise HTTPException(409, f"Le pack {product.name} ne contient aucun produit")
@@ -116,6 +116,9 @@ def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
         product_name=i.product.name if i.product else (i.description or ""),
         description=i.description or "",
         quantity=i.quantity or 1,
+        sale_unit=i.sale_unit or (i.product.unit if i.product else ""),
+        conversion_factor=i.conversion_factor or 1,
+        base_quantity=i.base_quantity or i.quantity or 1,
         unit_price=i.unit_price or 0,
         catalog_unit_price=i.catalog_unit_price or i.unit_price or 0,
         price_overridden=bool(i.price_overridden),
@@ -295,6 +298,7 @@ def create_sale_return(
                 f"[restock:{1 if should_restock else 0}]"
             ),
             "quantity": quantity,
+            "sale_unit": original.sale_unit or (original.product.unit if original.product else ""),
             "unit_price": original.unit_price or 0,
             "purchase_price": original.purchase_price or 0,
             "discount": original.discount or 0,
@@ -347,6 +351,9 @@ def create_sale_return(
                 product_id=row.get("product_id"),
                 description=row.get("description", ""),
                 quantity=row["quantity"],
+                sale_unit=row.get("sale_unit", ""),
+                conversion_factor=row.get("conversion_factor", 1),
+                base_quantity=row.get("base_quantity", row["quantity"]),
                 unit_price=row["unit_price"],
                 catalog_unit_price=row.get("catalog_unit_price", row["unit_price"]),
                 price_overridden=row.get("price_overridden", False),
@@ -403,7 +410,10 @@ def create_sale_return(
                     sale_id=exchange.id,
                     product_id=row.get("product_id"),
                     description=row.get("description", ""),
-                    quantity=row["quantity"],
+                quantity=row["quantity"],
+                sale_unit=row.get("sale_unit", ""),
+                conversion_factor=row.get("conversion_factor", 1),
+                base_quantity=row.get("base_quantity", row["quantity"]),
                     unit_price=row["unit_price"],
                     catalog_unit_price=row.get("catalog_unit_price", row["unit_price"]),
                     price_overridden=row.get("price_overridden", False),
@@ -580,6 +590,9 @@ def convert_quote_to_invoice(
                 product_id=item.product_id,
                 description=item.description or "",
                 quantity=item.quantity or 1,
+                sale_unit=item.sale_unit or "",
+                conversion_factor=item.conversion_factor or 1,
+                base_quantity=item.base_quantity or item.quantity or 1,
                 unit_price=item.unit_price or 0,
                 catalog_unit_price=item.catalog_unit_price or item.unit_price or 0,
                 price_overridden=bool(item.price_overridden),
@@ -647,6 +660,9 @@ def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(ge
                 product_id=item.get("product_id"),
                 description=item.get("description", ""),
                 quantity=item["quantity"],
+                sale_unit=item.get("sale_unit", ""),
+                conversion_factor=item.get("conversion_factor", 1),
+                base_quantity=item.get("base_quantity", item["quantity"]),
                 unit_price=item["unit_price"],
                 catalog_unit_price=item.get("catalog_unit_price", item["unit_price"]),
                 price_overridden=item.get("price_overridden", False),
@@ -723,6 +739,9 @@ def update_sale(
             product_id=item.get("product_id"),
             description=item.get("description", ""),
             quantity=item["quantity"],
+            sale_unit=item.get("sale_unit", ""),
+            conversion_factor=item.get("conversion_factor", 1),
+            base_quantity=item.get("base_quantity", item["quantity"]),
             unit_price=item["unit_price"],
             catalog_unit_price=item.get("catalog_unit_price", item["unit_price"]),
             price_overridden=item.get("price_overridden", False),

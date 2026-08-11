@@ -221,7 +221,7 @@ async function createSalePdf(sale, settings = {}) {
   const head = [['DÉSIGNATION', 'QTÉ', 'PU HT', 'REMISE', ...(vat ? ['TVA'] : []), 'TOTAL']]
   const body = (sale.items || []).map(item => [
     item.product_name || item.description || 'Article',
-    fmt(item.quantity, 0),
+    `${fmt(item.quantity, 0)} ${item.sale_unit || ''}`.trim(),
     money(item.unit_price, currency),
     `${fmt(item.discount || 0)} %`,
     ...(vat ? [`${fmt(item.tax_rate || 0)} %`] : []),

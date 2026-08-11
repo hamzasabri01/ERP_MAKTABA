@@ -220,7 +220,7 @@ export default function ThermalReceipt({ sale, settings = {}, language = 'fr', c
         <tbody>
           {items.map((item, index) => (
             <tr key={item.id || index}>
-              <td className="thermal-num">{fmt(item.quantity, 0)}</td>
+              <td className="thermal-num">{fmt(item.quantity, 0)}{item.sale_unit ? ` ${item.sale_unit}` : ''}</td>
               <td className="thermal-unit">{item.unit || 'U'}</td>
               <td className="thermal-item-name">
                 <strong>{item.product_name || item.description}</strong>

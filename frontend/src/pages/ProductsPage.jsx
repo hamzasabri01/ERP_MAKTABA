@@ -13,8 +13,17 @@ import './ProductImages.css'
 import './ProductImport.css'
 import './ProductsPage.css'
 
-const EMPTY = { name:'', code:'', category_id:'', supplier_id:'', description:'', purchase_price:0, sale_price:0, stock_quantity:0, min_stock:5, barcode:'', unit:'pcs', purchase_unit:'pcs', purchase_to_base_factor:1, allow_fractional_sale:false, tax_rate:20, tva_enabled:1, product_type:'product', pricing_mode:'fixed', is_active:1 }
+const EMPTY = { name:'', code:'', category_id:'', supplier_id:'', description:'', purchase_price:0, sale_price:0, stock_quantity:0, min_stock:5, barcode:'', unit:'pcs', purchase_unit:'pcs', purchase_to_base_factor:1, allow_fractional_sale:false, sale_unit:'', sale_to_base_factor:1, sale_unit_price:0, tax_rate:20, tva_enabled:1, product_type:'product', pricing_mode:'fixed', is_active:1 }
 const PAGE_SIZE = 100
+
+const productStockLabel = product => {
+  const stock = Math.max(0, Math.floor(Number(product.stock_quantity) || 0))
+  const factor = Math.floor(Number(product.sale_to_base_factor) || 1)
+  if (!product.sale_unit || factor <= 1 || Number(product.sale_unit_price) <= 0) {
+    return `${stock} ${product.unit || 'pcs'}`
+  }
+  return `${Math.floor(stock / factor)} ${product.sale_unit} + ${stock % factor} ${product.unit || 'pcs'}`
+}
 
 export default function ProductsPage() {
   const navigate = useNavigate()
@@ -347,10 +356,24 @@ export default function ProductsPage() {
       parseNonNegative('stock_quantity', 'Le stock actuel', { decimals:0 })
       parseNonNegative('min_stock', 'Le stock minimum', { decimals:0 })
       parseNonNegative('purchase_to_base_factor', "Le contenu de l'unité d'achat", { positive:true, decimals:0 })
+      parseNonNegative('sale_to_base_factor', "Le contenu de l'unité de vente secondaire", { positive:true, decimals:0 })
+      parseNonNegative('sale_unit_price', "Le prix de l'unité de vente secondaire")
+      normalized.sale_unit = String(form.sale_unit || '').trim()
+      if (normalized.sale_unit) {
+        if (normalized.sale_unit === String(form.unit || '').trim()) errors.sale_unit = "L'unité secondaire doit être différente de l'unité de base"
+        if (Number(normalized.sale_to_base_factor) <= 1) errors.sale_to_base_factor = 'Le contenu doit être supérieur à une pièce'
+        if (Number(normalized.sale_unit_price) <= 0) errors.sale_unit_price = 'Indiquez le prix de vente de la caisse'
+      } else {
+        normalized.sale_to_base_factor = 1
+        normalized.sale_unit_price = 0
+      }
     } else {
       normalized.stock_quantity = 0
       normalized.min_stock = 0
       normalized.purchase_to_base_factor = 1
+      normalized.sale_unit = ''
+      normalized.sale_to_base_factor = 1
+      normalized.sale_unit_price = 0
     }
 
     const barcode = String(form.barcode || '').replace(/\s/g, '').trim()
@@ -520,8 +543,8 @@ export default function ProductsPage() {
   }
 
   const handleTemplate = () => {
-    const header = 'code;name;product_type;pricing_mode;category;supplier;barcode;unit;purchase_unit;purchase_to_base_factor;allow_fractional_sale;purchase_price;sale_price;stock_quantity;min_stock;tax_rate;tva_enabled;description;is_active'
-    const sample = 'PRD-EXEMPLE;Cahier scolaire;product;fixed;Papeterie;Fournisseur exemple;6110000000000;pcs;boite;12;0;10;15;25;5;20;1;Cahier exemple;1'
+    const header = 'code;name;product_type;pricing_mode;category;supplier;barcode;unit;purchase_unit;purchase_to_base_factor;allow_fractional_sale;sale_unit;sale_to_base_factor;sale_unit_price;purchase_price;sale_price;stock_quantity;min_stock;tax_rate;tva_enabled;description;is_active'
+    const sample = 'PRD-EXEMPLE;Cahier scolaire;product;fixed;Papeterie;Fournisseur exemple;6110000000000;pcs;caisse;24;0;caisse;24;300;10;15;50;5;20;1;Cahier exemple;1'
     downloadBlob(new Blob([`\ufeff${header}\n${sample}\n`], { type: 'text/csv;charset=utf-8' }), 'modele-import-produits.csv')
   }
 
@@ -800,7 +823,7 @@ export default function ProductsPage() {
                   <td className="font-semibold">{fmt(p.sale_price)} MAD</td>
                   <td>
                     {p.product_type === 'product'
-                      ? <span style={{ color: p.is_low_stock ? 'var(--danger)' : 'var(--success)' }}>{p.stock_quantity} {p.unit}</span>
+                      ? <span style={{ color: p.is_low_stock ? 'var(--danger)' : 'var(--success)' }}>{productStockLabel(p)}</span>
                       : p.product_type === 'bundle'
                         ? <span className="bundle-availability">{p.stock_quantity} pack(s)</span>
                         : <span className="text-muted">Sans stock</span>}
@@ -1154,6 +1177,27 @@ export default function ProductsPage() {
                       </span>
                     </label>
                   </div>
+                  <div className="form-group">
+                    <label className="form-label">Unité de vente secondaire (optionnelle)</label>
+                    <select {...F('sale_unit')}>
+                      <option value="">— Vente uniquement en {form.unit || 'pcs'} —</option>
+                      {productUnits.filter(unit => unit !== form.unit).map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                    </select>
+                    <FieldError name="sale_unit" />
+                  </div>
+                  {form.sale_unit ? <>
+                    <div className="form-group">
+                      <label className="form-label">Contenu de 1 {form.sale_unit}</label>
+                      <input {...F('sale_to_base_factor')} data-product-field="sale_to_base_factor" type="number" min="2" step="1" inputMode="numeric" />
+                      <FieldError name="sale_to_base_factor" />
+                      <small className="text-muted">1 {form.sale_unit} = {form.sale_to_base_factor || 1} {form.unit || 'pcs'}</small>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Prix de vente de 1 {form.sale_unit} (MAD)</label>
+                      <input {...F('sale_unit_price')} data-product-field="sale_unit_price" type="number" min="0.01" step="0.01" />
+                      <FieldError name="sale_unit_price" />
+                    </div>
+                  </> : null}
                 </>)}
                 {form.product_type === 'bundle' && (
                   <div className="form-group bundle-builder" style={{ gridColumn:'1/-1' }}>

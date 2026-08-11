@@ -85,6 +85,9 @@ def _migrate_schema():
             ("purchase_unit", "VARCHAR(20) NOT NULL DEFAULT 'pcs'"),
             ("purchase_to_base_factor", "NUMERIC(18,4) NOT NULL DEFAULT 1"),
             ("allow_fractional_sale", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("sale_unit", "VARCHAR(20) NOT NULL DEFAULT ''"),
+            ("sale_to_base_factor", "NUMERIC(18,4) NOT NULL DEFAULT 1"),
+            ("sale_unit_price", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
         ],
         "roles": [("description", "VARCHAR(300)")],
         "users": [
@@ -116,6 +119,9 @@ def _migrate_schema():
             ("catalog_unit_price", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
             ("price_overridden", "BOOLEAN NOT NULL DEFAULT 0"),
             ("price_override_reason", "TEXT NOT NULL DEFAULT ''"),
+            ("sale_unit", "VARCHAR(20) NOT NULL DEFAULT ''"),
+            ("conversion_factor", "NUMERIC(18,4) NOT NULL DEFAULT 1"),
+            ("base_quantity", "NUMERIC(18,4) NOT NULL DEFAULT 0"),
         ],
         "purchases": [
             ("version", "INTEGER NOT NULL DEFAULT 1"),
@@ -212,6 +218,23 @@ def _migrate_schema():
             ))
             conn.execute(text(
                 "INSERT INTO app_migrations(name,applied_at) VALUES('product_units_v1',CURRENT_TIMESTAMP)"
+            ))
+        sale_units_backfill = conn.execute(text(
+            "SELECT 1 FROM app_migrations WHERE name='sale_units_v1'"
+        )).fetchone()
+        if not sale_units_backfill:
+            conn.execute(text(
+                "UPDATE products SET sale_to_base_factor=coalesce(nullif(sale_to_base_factor,0),1), "
+                "sale_unit_price=coalesce(sale_unit_price,0)"
+            ))
+            conn.execute(text(
+                "UPDATE sale_items SET sale_unit=coalesce(nullif(sale_unit,''), "
+                "(SELECT unit FROM products WHERE products.id=sale_items.product_id), 'pcs'), "
+                "conversion_factor=coalesce(nullif(conversion_factor,0),1), "
+                "base_quantity=quantity*coalesce(nullif(conversion_factor,0),1)"
+            ))
+            conn.execute(text(
+                "INSERT INTO app_migrations(name,applied_at) VALUES('sale_units_v1',CURRENT_TIMESTAMP)"
             ))
         for role_name in ("admin", "manager", "cashier"):
             row = conn.execute(

@@ -80,6 +80,20 @@ function lineTotal(item, vatEnabled = true) {
   return { net, tax, total: net + tax }
 }
 
+function secondarySaleEnabled(product) {
+  return product?.product_type === 'product'
+    && String(product.sale_unit || '').trim()
+    && toNumber(product.sale_to_base_factor, 1) > 1
+    && toNumber(product.sale_unit_price) > 0
+}
+
+function stockLabel(product) {
+  const stock = Math.max(0, Math.floor(toNumber(product.stock_quantity)))
+  if (!secondarySaleEnabled(product)) return `${stock} ${product.unit || 'pcs'}`
+  const factor = Math.floor(toNumber(product.sale_to_base_factor, 1))
+  return `${Math.floor(stock / factor)} ${product.sale_unit} + ${stock % factor} ${product.unit || 'pcs'}`
+}
+
 export default function POSPage() {
   const [searchParams] = useSearchParams()
   const confirm = useConfirm()
@@ -263,6 +277,7 @@ export default function POSPage() {
       discount: item.discount || 0,
       tax_rate: vatEnabled ? (item.tax_rate ?? 0) : 0,
       price_override_reason: item.price_override_reason || '',
+      sale_unit: item.sale_unit || item.base_unit || '',
     })),
   }), [cart, payment.client_id, payment.discount, payment.mode, vatEnabled])
 
@@ -304,11 +319,15 @@ export default function POSPage() {
         removed = true
         return []
       }
-      if (toNumber(item.quantity, 1) > available) {
+      const factor = Math.max(1, toNumber(item.conversion_factor, 1))
+      const availableUnits = Math.floor(available / factor)
+      if (toNumber(item.quantity, 1) > availableUnits) {
         adjusted = true
-        return [{ ...item, quantity: available, stock_quantity: available }]
+        return availableUnits > 0
+          ? [{ ...item, quantity: availableUnits, stock_quantity: available, max_quantity:availableUnits }]
+          : []
       }
-      return [{ ...item, stock_quantity: available }]
+      return [{ ...item, stock_quantity: available, max_quantity:availableUnits }]
     }))
     if (adjusted && showToast) {
       toast.error(removed
@@ -347,10 +366,11 @@ export default function POSPage() {
       const found = prev.find(i => i.product_id === product.id)
       if (found) {
         const nextQty = toNumber(found.quantity, 1) + toNumber(configured?.quantity, 1)
-        if (['product', 'bundle'].includes(product.product_type) && nextQty > available) {
-          toast.error(`Stock disponible: ${fmt(available, 0)} ${product.unit || ''}`)
+        const maximum = Math.floor(available / Math.max(1, toNumber(found.conversion_factor, 1)))
+        if (['product', 'bundle'].includes(product.product_type) && nextQty > maximum) {
+          toast.error(`Stock disponible: ${fmt(maximum, 0)} ${found.sale_unit || product.unit || ''}`)
           return prev.map(i => i.product_id === product.id
-            ? { ...i, quantity: available, stock_quantity: available }
+            ? { ...i, quantity: maximum, stock_quantity: available, max_quantity:maximum }
             : i
           )
         }
@@ -382,6 +402,14 @@ export default function POSPage() {
         stock_quantity: available,
         product_type: product.product_type,
         allow_fractional_sale: Boolean(product.allow_fractional_sale),
+        base_unit: product.unit || 'pcs',
+        sale_unit: product.unit || 'pcs',
+        conversion_factor: 1,
+        max_quantity: available,
+        secondary_unit: secondarySaleEnabled(product) ? product.sale_unit : '',
+        secondary_factor: secondarySaleEnabled(product) ? toNumber(product.sale_to_base_factor, 1) : 1,
+        secondary_price: secondarySaleEnabled(product) ? toNumber(product.sale_unit_price) : 0,
+        base_price: toNumber(product.sale_price),
       }]
     })
   }
@@ -510,9 +538,10 @@ export default function POSPage() {
     setCart(prev => prev.map(item => {
       if (item.product_id !== productId) return item
       if (qty <= 0) return { ...item, quantity: 1 }
-      if (['product', 'bundle'].includes(item.product_type) && qty > item.stock_quantity) {
-        toast.error(`Quantité ajustée au stock disponible: ${fmt(item.stock_quantity, 0)}`)
-        return { ...item, quantity: item.stock_quantity }
+      const maximum = Math.max(0, toNumber(item.max_quantity, item.stock_quantity))
+      if (['product', 'bundle'].includes(item.product_type) && qty > maximum) {
+        toast.error(`Quantité ajustée au stock disponible: ${fmt(maximum, 0)} ${item.sale_unit || ''}`)
+        return { ...item, quantity: maximum }
       }
       return { ...item, quantity: qty }
     }))
@@ -540,6 +569,25 @@ export default function POSPage() {
 
   const normalizeLineValue = (productId, key, value, fallback = 0) => {
     if (value === '') updateLine(productId, key, fallback)
+  }
+
+  const changeSaleUnit = (productId, saleUnit) => {
+    setCart(prev => prev.map(item => {
+      if (item.product_id !== productId) return item
+      const secondary = saleUnit === item.secondary_unit && item.secondary_unit
+      const factor = secondary ? Math.max(2, toNumber(item.secondary_factor, 1)) : 1
+      const maximum = Math.floor(Math.max(0, toNumber(item.stock_quantity)) / factor)
+      return {
+        ...item,
+        sale_unit: secondary ? item.secondary_unit : item.base_unit,
+        conversion_factor: factor,
+        unit_price: secondary ? item.secondary_price : item.base_price,
+        catalog_unit_price: secondary ? item.secondary_price : item.base_price,
+        max_quantity: maximum,
+        quantity: Math.min(Math.max(1, toNumber(item.quantity, 1)), maximum || 1),
+        price_override_reason: '',
+      }
+    }))
   }
 
   const clearCart = async () => {
@@ -786,7 +834,7 @@ export default function POSPage() {
                     {p.product_type === 'service'
                       ? <small className="service-hint">{p.pricing_mode === 'manual' ? 'Prix à saisir' : 'Sans stock'}</small>
                       : <small className={p.is_low_stock ? 'stock-low' : ''}>
-                          {p.product_type === 'bundle' ? 'Packs disponibles' : 'Stock'}: {fmt(p.stock_quantity, 0)} {p.product_type === 'product' ? p.unit || '' : ''}
+                          {p.product_type === 'bundle' ? `Packs disponibles: ${fmt(p.stock_quantity, 0)}` : `Stock: ${stockLabel(p)}`}
                         </small>}
                     {p.updated_at && <small>Maj: {fmtDateTime(p.updated_at)}</small>}
                   </button>
@@ -861,7 +909,7 @@ export default function POSPage() {
                     </div>
                     <span className="pos-line-price">
                       <b>{fmt(item.unit_price)} {currency}</b>
-                      <small>× {fmt(item.quantity, 0)}</small>
+                      <small>× {fmt(item.quantity, 0)} {item.sale_unit || ''}</small>
                     </span>
                   </div>
                   <div className="pos-line-controls">
@@ -871,6 +919,14 @@ export default function POSPage() {
                     <button className="btn btn-danger btn-icon btn-sm" onClick={() => removeLine(item.product_id)}><Trash2 size={14} /></button>
                   </div>
                   <div className="pos-line-extra">
+                    {item.product_type === 'product' && item.secondary_unit ? (
+                      <label>Unité
+                        <select value={item.sale_unit || item.base_unit} onChange={event => changeSaleUnit(item.product_id, event.target.value)}>
+                          <option value={item.base_unit}>{item.base_unit} · {fmt(item.base_price)} {currency}</option>
+                          <option value={item.secondary_unit}>{item.secondary_unit} ({fmt(item.secondary_factor, 0)} {item.base_unit}) · {fmt(item.secondary_price)} {currency}</option>
+                        </select>
+                      </label>
+                    ) : null}
                     {item.product_type === 'service' && item.pricing_mode !== 'fixed' && (
                       <label>Prix unitaire
                         <input

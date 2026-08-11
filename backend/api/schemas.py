@@ -1,6 +1,6 @@
 """api/schemas.py — Pydantic v2 request/response schemas."""
 from __future__ import annotations
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import Annotated, Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -327,6 +327,9 @@ class ProductCreate(BaseModel):
     purchase_unit: str = "pcs"
     purchase_to_base_factor: QuantityInput = Decimal("1")
     allow_fractional_sale: bool = False
+    sale_unit: str = ""
+    sale_to_base_factor: QuantityInput = Decimal("1")
+    sale_unit_price: PriceInput = Decimal("0")
     tax_rate: PercentageInput = Decimal("20")
     tva_enabled: int = 1
     product_type: str = "product"
@@ -365,7 +368,15 @@ class ProductCreate(BaseModel):
             raise ValueError("L'unité ne peut pas dépasser 20 caractères")
         return normalized
 
-    @field_validator("purchase_to_base_factor")
+    @field_validator("sale_unit")
+    @classmethod
+    def validate_optional_sale_unit(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if len(normalized) > 20:
+            raise ValueError("L'unité de vente secondaire ne peut pas dépasser 20 caractères")
+        return normalized
+
+    @field_validator("purchase_to_base_factor", "sale_to_base_factor")
     @classmethod
     def validate_purchase_unit_content(cls, value: Decimal) -> Decimal:
         if value != value.to_integral_value():
@@ -409,6 +420,23 @@ class ProductCreate(BaseModel):
             raise ValueError("Mode de tarification invalide")
         return normalized
 
+    @model_validator(mode="after")
+    def validate_secondary_sale_unit(self):
+        if self.product_type != "product" or not self.sale_unit:
+            self.sale_unit = ""
+            self.sale_to_base_factor = Decimal("1")
+            self.sale_unit_price = Decimal("0")
+            return self
+        if self.sale_unit == self.unit:
+            raise ValueError("L'unité secondaire doit être différente de l'unité de base")
+        if self.sale_to_base_factor <= 1:
+            raise ValueError("L'unité secondaire doit contenir plus d'une unité de base")
+        if self.sale_to_base_factor != self.sale_to_base_factor.to_integral_value():
+            raise ValueError("Le contenu de l'unité secondaire doit être un nombre entier")
+        if self.sale_unit_price <= 0:
+            raise ValueError("Le prix de l'unité secondaire doit être strictement positif")
+        return self
+
 
 class ProductUpdate(ProductCreate):
     name: Optional[str] = None
@@ -436,6 +464,9 @@ class ProductOut(BaseModel):
     purchase_unit: str = "pcs"
     purchase_to_base_factor: float = 1.0
     allow_fractional_sale: bool = False
+    sale_unit: str = ""
+    sale_to_base_factor: float = 1.0
+    sale_unit_price: float = 0.0
     tax_rate: float = 20.0
     tva_enabled: int = 1
     product_type: str = "product"
@@ -459,6 +490,7 @@ class SaleItemIn(BaseModel):
     discount: PercentageInput = Decimal("0")
     tax_rate: PercentageInput = Decimal("20")
     price_override_reason: str = ""
+    sale_unit: str = ""
 
 
 class SaleItemOut(BaseModel):
@@ -478,6 +510,9 @@ class SaleItemOut(BaseModel):
     tax_amount: float = 0.0
     total_amount: float = 0.0
     line_total: float
+    sale_unit: str = ""
+    conversion_factor: float = 1.0
+    base_quantity: float = 0.0
     model_config = {"from_attributes": True}
 
 
