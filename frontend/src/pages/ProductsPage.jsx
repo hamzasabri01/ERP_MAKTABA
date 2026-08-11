@@ -13,7 +13,7 @@ import './ProductImages.css'
 import './ProductImport.css'
 import './ProductsPage.css'
 
-const EMPTY = { name:'', code:'', category_id:'', supplier_id:'', description:'', purchase_price:0, sale_price:0, stock_quantity:0, min_stock:5, barcode:'', unit:'pcs', purchase_unit:'pcs', purchase_to_base_factor:1, allow_fractional_sale:false, sale_unit:'', sale_to_base_factor:1, sale_unit_price:0, tax_rate:20, tva_enabled:1, product_type:'product', pricing_mode:'fixed', is_active:1 }
+const EMPTY = { name:'', code:'', category_id:'', supplier_id:'', description:'', purchase_price:0, sale_price:0, stock_quantity:0, min_stock:5, barcode:'', unit:'pcs', purchase_unit:'pcs', purchase_to_base_factor:1, allow_fractional_sale:false, enable_secondary_sale:false, sale_unit:'', sale_to_base_factor:1, sale_unit_price:0, tax_rate:20, tva_enabled:1, product_type:'product', pricing_mode:'fixed', is_active:1 }
 const PAGE_SIZE = 100
 
 const productStockLabel = product => {
@@ -106,7 +106,7 @@ export default function ProductsPage() {
   }
 
   const openCreate = () => {
-    setForm(EMPTY)
+    setForm({ ...EMPTY })
     setFormErrors({})
     setSelected(null)
     setBundleComponents([])
@@ -123,7 +123,7 @@ export default function ProductsPage() {
     setModal('import')
   }
   const openEdit   = async (p) => {
-    setForm({ ...p, category_id: p.category_id || '', supplier_id: p.supplier_id || '' })
+    setForm({ ...p, enable_secondary_sale:Boolean(p.sale_unit && Number(p.sale_to_base_factor) > 1 && Number(p.sale_unit_price) > 0), category_id: p.category_id || '', supplier_id: p.supplier_id || '' })
     setFormErrors({})
     setSelected(p)
     setNextCode('')
@@ -358,11 +358,13 @@ export default function ProductsPage() {
       parseNonNegative('purchase_to_base_factor', "Le contenu de l'unité d'achat", { positive:true, decimals:0 })
       parseNonNegative('sale_to_base_factor', "Le contenu de l'unité de vente secondaire", { positive:true, decimals:0 })
       parseNonNegative('sale_unit_price', "Le prix de l'unité de vente secondaire")
-      normalized.sale_unit = String(form.sale_unit || '').trim()
+      normalized.sale_unit = form.enable_secondary_sale ? String(form.sale_unit || '').trim() : ''
       if (normalized.sale_unit) {
         if (normalized.sale_unit === String(form.unit || '').trim()) errors.sale_unit = "L'unité secondaire doit être différente de l'unité de base"
         if (Number(normalized.sale_to_base_factor) <= 1) errors.sale_to_base_factor = 'Le contenu doit être supérieur à une pièce'
         if (Number(normalized.sale_unit_price) <= 0) errors.sale_unit_price = 'Indiquez le prix de vente de la caisse'
+      } else if (form.enable_secondary_sale) {
+        errors.sale_unit = "Choisissez l'unité secondaire"
       } else {
         normalized.sale_to_base_factor = 1
         normalized.sale_unit_price = 0
@@ -414,8 +416,9 @@ export default function ProductsPage() {
     setFormErrors({})
     setSaving(true)
     try {
+      const { enable_secondary_sale: _uiOnlySecondarySale, ...normalizedPayload } = normalized
       const payload = {
-        ...normalized,
+        ...normalizedPayload,
         stock_quantity: form.product_type === 'product' ? normalized.stock_quantity : 0,
         min_stock: form.product_type === 'product' ? normalized.min_stock : 0,
         purchase_to_base_factor: form.product_type === 'product' ? normalized.purchase_to_base_factor : 1,
@@ -710,6 +713,7 @@ export default function ProductsPage() {
     ? <small className="product-field-error" role="alert">{formErrors[name]}</small>
     : null
   const productUnits = String(settings.product_units || 'pcs,kg,g,l,ml,m,m2,m3,boite,lot').split(',').map(item => item.trim()).filter(Boolean)
+  const secondarySaleUnits = [...new Set([...productUnits, 'caisse', 'paquet', form.sale_unit].filter(Boolean))].filter(unit => unit !== form.unit)
   const openCatalogSettings = () => navigate('/settings?tab=catalog')
 
   return (
@@ -1177,27 +1181,62 @@ export default function ProductsPage() {
                       </span>
                     </label>
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Unité de vente secondaire (optionnelle)</label>
-                    <select {...F('sale_unit')}>
-                      <option value="">— Vente uniquement en {form.unit || 'pcs'} —</option>
-                      {productUnits.filter(unit => unit !== form.unit).map(unit => <option key={unit} value={unit}>{unit}</option>)}
-                    </select>
-                    <FieldError name="sale_unit" />
+                  <div className={`secondary-sale-config ${form.enable_secondary_sale ? 'is-enabled' : ''}`}>
+                    <label className="secondary-sale-toggle">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(form.enable_secondary_sale)}
+                        onChange={event => {
+                          const enabled = event.target.checked
+                          const suggestedUnit = secondarySaleUnits.find(unit => ['caisse', 'paquet', 'boite', 'boîte'].includes(String(unit).toLowerCase()))
+                            || secondarySaleUnits[0]
+                            || 'caisse'
+                          setForm(current => ({
+                            ...current,
+                            enable_secondary_sale:enabled,
+                            sale_unit:enabled ? (current.sale_unit || suggestedUnit) : '',
+                            sale_to_base_factor:enabled ? Math.max(2, Number(current.sale_to_base_factor) || 2) : 1,
+                            sale_unit_price:enabled ? current.sale_unit_price : 0,
+                          }))
+                          setFormErrors(current => ({ ...current, sale_unit:undefined, sale_to_base_factor:undefined, sale_unit_price:undefined }))
+                        }}
+                      />
+                      <span className="fractional-switch" aria-hidden="true"><i /></span>
+                      <span className="secondary-sale-toggle-icon"><Boxes size={19}/></span>
+                      <span className="secondary-sale-toggle-copy">
+                        <strong>Vendre aussi par caisse ou paquet</strong>
+                        <small>{form.enable_secondary_sale ? 'Activé pour ce produit uniquement' : `Ce produit sera vendu uniquement en ${form.unit || 'pcs'}`}</small>
+                      </span>
+                      <span className="secondary-sale-state">{form.enable_secondary_sale ? 'Activé' : 'Optionnel'}</span>
+                    </label>
+                    {form.enable_secondary_sale ? (
+                      <div className="secondary-sale-fields">
+                        <div className="form-group">
+                          <label className="form-label">Conditionnement</label>
+                          <select {...F('sale_unit')} data-product-field="sale_unit">
+                            <option value="">— Choisir —</option>
+                            {secondarySaleUnits.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+                          </select>
+                          <FieldError name="sale_unit" />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Nombre de {form.unit || 'pcs'} dans 1 {form.sale_unit || 'conditionnement'}</label>
+                          <input {...F('sale_to_base_factor')} data-product-field="sale_to_base_factor" type="number" min="2" step="1" inputMode="numeric" />
+                          <FieldError name="sale_to_base_factor" />
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Prix de vente de 1 {form.sale_unit || 'conditionnement'} (MAD)</label>
+                          <input {...F('sale_unit_price')} data-product-field="sale_unit_price" type="number" min="0.01" step="0.01" />
+                          <FieldError name="sale_unit_price" />
+                        </div>
+                        <div className="secondary-sale-preview">
+                          <span>Conversion POS</span>
+                          <strong>1 {form.sale_unit || '—'} = {form.sale_to_base_factor || '—'} {form.unit || 'pcs'}</strong>
+                          <small>Le stock reste géré automatiquement en {form.unit || 'pcs'}.</small>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-                  {form.sale_unit ? <>
-                    <div className="form-group">
-                      <label className="form-label">Contenu de 1 {form.sale_unit}</label>
-                      <input {...F('sale_to_base_factor')} data-product-field="sale_to_base_factor" type="number" min="2" step="1" inputMode="numeric" />
-                      <FieldError name="sale_to_base_factor" />
-                      <small className="text-muted">1 {form.sale_unit} = {form.sale_to_base_factor || 1} {form.unit || 'pcs'}</small>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Prix de vente de 1 {form.sale_unit} (MAD)</label>
-                      <input {...F('sale_unit_price')} data-product-field="sale_unit_price" type="number" min="0.01" step="0.01" />
-                      <FieldError name="sale_unit_price" />
-                    </div>
-                  </> : null}
                 </>)}
                 {form.product_type === 'bundle' && (
                   <div className="form-group bundle-builder" style={{ gridColumn:'1/-1' }}>

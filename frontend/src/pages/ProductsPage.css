@@ -437,6 +437,109 @@
   color: var(--success);
 }
 
+.secondary-sale-config {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 2.5%, var(--bg2));
+  transition: border-color .2s var(--ease-out), box-shadow .2s var(--ease-out), background .2s var(--ease-out);
+}
+.secondary-sale-config.is-enabled {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 7%, var(--bg2)), var(--bg2) 60%);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.secondary-sale-toggle {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+.secondary-sale-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+.secondary-sale-toggle:has(input:focus-visible) {
+  box-shadow: inset 0 0 0 3px var(--accent-glow);
+}
+.secondary-sale-toggle > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.secondary-sale-toggle input:checked + .fractional-switch {
+  background: linear-gradient(135deg, #28be70, #159650);
+  box-shadow: 0 0 0 3px rgba(34,197,94,.12);
+}
+.secondary-sale-toggle input:checked + .fractional-switch i { transform: translateX(15px); }
+.secondary-sale-toggle-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg2));
+}
+.secondary-sale-toggle-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: .2rem;
+}
+.secondary-sale-toggle-copy strong { color: var(--text); font-size: .88rem; }
+.secondary-sale-toggle-copy small { color: var(--text3); font-size: .72rem; }
+.secondary-sale-config.is-enabled .secondary-sale-toggle-copy small { color: var(--success); }
+.secondary-sale-state {
+  padding: .28rem .55rem;
+  border-radius: 999px;
+  color: var(--text3);
+  background: var(--bg3);
+  font-size: .68rem;
+  font-weight: 750;
+}
+.secondary-sale-config.is-enabled .secondary-sale-state {
+  color: #08783e;
+  background: rgba(34,197,94,.13);
+}
+.secondary-sale-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .8rem;
+  padding: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  animation: secondarySaleReveal .24s var(--ease-out) both;
+}
+.secondary-sale-preview {
+  grid-column: 1 / -1;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: .15rem 1rem;
+  padding: .65rem .8rem;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg3));
+}
+.secondary-sale-preview span { grid-row: 1 / 3; color: var(--accent); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.secondary-sale-preview strong { color: var(--text); font-size: .85rem; }
+.secondary-sale-preview small { color: var(--text3); font-size: .7rem; }
+@keyframes secondarySaleReveal {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 760px) {
+  .secondary-sale-fields { grid-template-columns: 1fr; }
+  .secondary-sale-state { display: none; }
+}
+
 .bundle-builder-head {
   display: flex;
   align-items: flex-start;

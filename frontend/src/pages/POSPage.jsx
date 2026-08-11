@@ -830,7 +830,12 @@ export default function POSPage() {
                     </div>
                     <span className="pos-product-code">{p.code || p.barcode || 'PROD'}</span>
                     <strong>{p.name}</strong>
-                    <span>{fmt(p.sale_price)} {currency}</span>
+                    {secondarySaleEnabled(p) ? (
+                      <span className="pos-product-dual-price">
+                        <b>{fmt(p.sale_price)} {currency}<small> / {p.unit || 'pcs'}</small></b>
+                        <b>{fmt(p.sale_unit_price)} {currency}<small> / {p.sale_unit}</small></b>
+                      </span>
+                    ) : <span>{fmt(p.sale_price)} {currency}</span>}
                     {p.product_type === 'service'
                       ? <small className="service-hint">{p.pricing_mode === 'manual' ? 'Prix à saisir' : 'Sans stock'}</small>
                       : <small className={p.is_low_stock ? 'stock-low' : ''}>
@@ -912,6 +917,31 @@ export default function POSPage() {
                       <small>× {fmt(item.quantity, 0)} {item.sale_unit || ''}</small>
                     </span>
                   </div>
+                  {item.product_type === 'product' && item.secondary_unit ? (
+                    <div className="pos-unit-picker" role="group" aria-label={`Unité de vente pour ${item.name}`}>
+                      <button
+                        type="button"
+                        className={item.sale_unit === item.base_unit ? 'is-active' : ''}
+                        aria-pressed={item.sale_unit === item.base_unit}
+                        onClick={() => changeSaleUnit(item.product_id, item.base_unit)}
+                      >
+                        <span className="pos-unit-icon"><Package size={16}/></span>
+                        <span><strong>À l’unité</strong><small>{item.base_unit} · {fmt(item.base_price)} {currency}</small></span>
+                        <em>{fmt(item.stock_quantity, 0)} dispo.</em>
+                      </button>
+                      <button
+                        type="button"
+                        className={item.sale_unit === item.secondary_unit ? 'is-active' : ''}
+                        aria-pressed={item.sale_unit === item.secondary_unit}
+                        disabled={Math.floor(toNumber(item.stock_quantity) / Math.max(1, toNumber(item.secondary_factor))) < 1}
+                        onClick={() => changeSaleUnit(item.product_id, item.secondary_unit)}
+                      >
+                        <span className="pos-unit-icon"><Boxes size={16}/></span>
+                        <span><strong>Par {item.secondary_unit}</strong><small>{fmt(item.secondary_factor, 0)} {item.base_unit} · {fmt(item.secondary_price)} {currency}</small></span>
+                        <em>{Math.floor(toNumber(item.stock_quantity) / Math.max(1, toNumber(item.secondary_factor)))} dispo.</em>
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="pos-line-controls">
                     <button className="btn btn-secondary btn-icon btn-sm" onClick={() => updateQty(item.product_id, Math.max(1, toNumber(item.quantity, 1) - 1))}><Minus size={14} /></button>
                     <input type="number" min="1" step="1" value={item.quantity} onChange={e => updateQty(item.product_id, e.target.value)} onBlur={e => normalizeQty(item.product_id, e.target.value)} />
@@ -919,14 +949,6 @@ export default function POSPage() {
                     <button className="btn btn-danger btn-icon btn-sm" onClick={() => removeLine(item.product_id)}><Trash2 size={14} /></button>
                   </div>
                   <div className="pos-line-extra">
-                    {item.product_type === 'product' && item.secondary_unit ? (
-                      <label>Unité
-                        <select value={item.sale_unit || item.base_unit} onChange={event => changeSaleUnit(item.product_id, event.target.value)}>
-                          <option value={item.base_unit}>{item.base_unit} · {fmt(item.base_price)} {currency}</option>
-                          <option value={item.secondary_unit}>{item.secondary_unit} ({fmt(item.secondary_factor, 0)} {item.base_unit}) · {fmt(item.secondary_price)} {currency}</option>
-                        </select>
-                      </label>
-                    ) : null}
                     {item.product_type === 'service' && item.pricing_mode !== 'fixed' && (
                       <label>Prix unitaire
                         <input
