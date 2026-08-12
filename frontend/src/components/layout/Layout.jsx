@@ -10,6 +10,7 @@ import { useI18n } from '../../lib/i18n'
 import { storageJson, storageSet } from '../../lib/safeStorage'
 import { playSound, setSoundsEnabled, soundsEnabled, subscribeSoundSetting } from '../../lib/soundFeedback'
 import CommandPalette from './CommandPalette'
+import PrayerTimesWidget from './PrayerTimesWidget'
 import { useConfirm } from '../ui/ConfirmDialog'
 import toast from 'react-hot-toast'
 import {
@@ -754,6 +755,7 @@ export default function Layout() {
             <kbd>Ctrl K</kbd>
           </button>
           <div style={{ flex: 1 }} />
+          <PrayerTimesWidget language={language} />
           <button
             className={`theme-toggle theme-toggle-${theme}${language === 'ar' ? ' theme-toggle-ar' : ''}`}
             onClick={toggleTheme}

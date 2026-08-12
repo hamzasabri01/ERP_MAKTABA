@@ -19,7 +19,7 @@ from api.routes import (
     auth, clients, products, categories, suppliers,
     sales, purchases, expenses, stock, reports,
     users, settings, cash, dashboard, backups, audit, notifications, search, payments, system, security_center,
-    mobile_scanner, printer, research, document_scanner
+    mobile_scanner, printer, research, document_scanner, prayer_times
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -120,6 +120,7 @@ app.include_router(mobile_scanner.router, prefix="/api/mobile-scanner", tags=["M
 app.include_router(printer.router, prefix="/api/printer", tags=["Printer"], dependencies=[Depends(require_permission("expenses"))])
 app.include_router(research.router, prefix="/api/research", tags=["School Research"])
 app.include_router(document_scanner.router, prefix="/api/document-scanner", tags=["Document Scanner"])
+app.include_router(prayer_times.router, prefix="/api/prayer-times", tags=["Prayer Times"])
 
 # Serve uploaded images
 os.makedirs("uploads", exist_ok=True)
@@ -131,7 +132,7 @@ def health():
     return {
         "status": "ok",
         "version": "1.1.0",
-        "capabilities": ["document_archive", "mobile_scanner", "reports"],
+        "capabilities": ["document_archive", "mobile_scanner", "reports", "prayer_times"],
     }
 
 
