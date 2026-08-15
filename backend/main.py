@@ -19,7 +19,7 @@ from api.routes import (
     auth, clients, products, categories, suppliers,
     sales, purchases, expenses, stock, reports,
     users, settings, cash, dashboard, backups, audit, notifications, search, payments, system, security_center,
-    mobile_scanner, printer, research, document_scanner, prayer_times
+    mobile_scanner, printer, research, document_scanner, prayer_times, weather
 )
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -72,7 +72,15 @@ app.add_middleware(
         "https://app-erp-622bc.web.app",
         "https://app-erp-622bc.firebaseapp.com",
     ]),
-    allow_origin_regex=r"^https://.*\.trycloudflare\.com$",
+    # Direct API access is supported for the local Vite server and private-LAN
+    # addresses. Normal local/production deployments still use same-origin
+    # /api requests and therefore do not depend on CORS.
+    allow_origin_regex=(
+        r"^(?:https://.*\.trycloudflare\.com|"
+        r"http://(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|"
+        r"192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})"
+        r"(?::\d{1,5})?)$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -121,6 +129,7 @@ app.include_router(printer.router, prefix="/api/printer", tags=["Printer"], depe
 app.include_router(research.router, prefix="/api/research", tags=["School Research"])
 app.include_router(document_scanner.router, prefix="/api/document-scanner", tags=["Document Scanner"])
 app.include_router(prayer_times.router, prefix="/api/prayer-times", tags=["Prayer Times"])
+app.include_router(weather.router, prefix="/api/weather", tags=["Weather"])
 
 # Serve uploaded images
 os.makedirs("uploads", exist_ok=True)
@@ -128,6 +137,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 @app.get("/health")
+@app.get("/api/health", include_in_schema=False)
 def health():
     return {
         "status": "ok",

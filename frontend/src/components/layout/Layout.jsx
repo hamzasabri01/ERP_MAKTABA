@@ -11,6 +11,7 @@ import { storageJson, storageSet } from '../../lib/safeStorage'
 import { playSound, setSoundsEnabled, soundsEnabled, subscribeSoundSetting } from '../../lib/soundFeedback'
 import CommandPalette from './CommandPalette'
 import PrayerTimesWidget from './PrayerTimesWidget'
+import WeatherWidget from './WeatherWidget'
 import { useConfirm } from '../ui/ConfirmDialog'
 import toast from 'react-hot-toast'
 import {
@@ -755,8 +756,10 @@ export default function Layout() {
             <kbd>Ctrl K</kbd>
           </button>
           <div style={{ flex: 1 }} />
-          <PrayerTimesWidget language={language} />
-          <button
+          <div className="topbar-feature-cards">
+            <WeatherWidget language={language} />
+            <PrayerTimesWidget language={language} />
+            <button
             className={`theme-toggle theme-toggle-${theme}${language === 'ar' ? ' theme-toggle-ar' : ''}`}
             onClick={toggleTheme}
             aria-label={language === 'ar'
@@ -778,7 +781,8 @@ export default function Layout() {
               <i className="theme-star theme-star-one">✦</i>
               <i className="theme-star theme-star-two">•</i>
             </span>
-          </button>
+            </button>
+          </div>
           <button
             type="button"
             className={`btn btn-secondary btn-icon sound-toggle-btn${soundOn ? ' is-on' : ' is-muted'}`}

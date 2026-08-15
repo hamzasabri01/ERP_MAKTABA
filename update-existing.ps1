@@ -23,6 +23,7 @@ $SnapshotBefore = Join-Path $BackupDir "before.json"
 $DatabaseBackup = Join-Path $BackupDir "proerp.db"
 $OldCommit = $null
 $TaskWasRunning = $false
+$StartupTasks = @("LibrarySabri-Server", "LibrarySabri-OpenChrome", "ProERP LAN Server", "LibrarySabri")
 
 function Info($message) { Write-Host "[INFO] $message" -ForegroundColor Cyan }
 function Good($message) { Write-Host "[OK]   $message" -ForegroundColor Green }
@@ -65,10 +66,12 @@ New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
 $OldCommit = (git rev-parse HEAD).Trim()
 
 try {
-    $task = Get-ScheduledTask -TaskName "LibrarySabri" -ErrorAction SilentlyContinue
-    if ($task -and $task.State -eq "Running") {
-        $TaskWasRunning = $true
-        Stop-ScheduledTask -TaskName "LibrarySabri" -ErrorAction SilentlyContinue
+    foreach ($taskName in $StartupTasks) {
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($task -and $task.State -eq "Running") {
+            $TaskWasRunning = $true
+            Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        }
     }
     Info "Arret temporaire de l'application..."
     & (Join-Path $ScriptDir "stop.ps1") | Out-Host
@@ -79,7 +82,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Impossible de lire la base actuelle." }
     & $Python $Guard backup --database $Database --output $DatabaseBackup | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Impossible de sauvegarder la base actuelle." }
-    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data")) {
+    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data", "backend\backups")) {
         Copy-PreservedItem $item
     }
     Good "Sauvegarde creee: $BackupDir"
@@ -93,7 +96,7 @@ try {
     # Restore local data even if a future repository version accidentally
     # contains placeholder settings or runtime directories.
     Copy-Item -LiteralPath $DatabaseBackup -Destination $Database -Force
-    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data")) {
+    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data", "backend\backups")) {
         Restore-PreservedItem $item
     }
 
@@ -126,22 +129,27 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Le controle des donnees apres mise a jour a echoue." }
     Good "Base intacte: aucun produit ni document perdu."
 
-    & (Join-Path $ScriptDir "start.ps1") -NoBrowser -ForceRestart | Out-Host
-    $health = Invoke-RestMethod "http://127.0.0.1:8010/health" -TimeoutSec 8
+    Info "Activation du serveur local, du diagnostic et du demarrage automatique..."
+    & (Join-Path $ScriptDir "scripts\install-lan-erp-startup.ps1") -Port 8015 -OpenFirewall -NoImmediateOpen | Out-Host
+
+    $health = Invoke-RestMethod "http://127.0.0.1:8015/health" -TimeoutSec 12
     if ($health.status -ne "ok") { throw "Le nouveau serveur ne repond pas correctement." }
-    if ($TaskWasRunning) { Start-ScheduledTask -TaskName "LibrarySabri" -ErrorAction SilentlyContinue }
 
     Good "Mise a jour terminee avec succes. Version serveur: $($health.version)"
     Write-Host "Sauvegarde de securite: $BackupDir" -ForegroundColor Gray
-    if (-not $NoBrowser) { Start-Process "http://localhost:5173" }
+    if (-not $NoBrowser) { Start-Process "http://127.0.0.1:8015/erp" }
 } catch {
     Write-Host "[ERREUR] $($_.Exception.Message)" -ForegroundColor Red
     Warn "Restauration automatique de la version et des donnees precedentes..."
     if ($OldCommit) { git reset --hard $OldCommit | Out-Null }
     if (Test-Path $DatabaseBackup) { Copy-Item -LiteralPath $DatabaseBackup -Destination $Database -Force }
-    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data")) {
+    foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data", "backend\backups")) {
         Restore-PreservedItem $item
     }
-    if ($TaskWasRunning) { Start-ScheduledTask -TaskName "LibrarySabri" -ErrorAction SilentlyContinue }
+    if ($TaskWasRunning) {
+        foreach ($taskName in $StartupTasks) {
+            Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        }
+    }
     throw "Mise a jour annulee. Les anciennes donnees ont ete restaurees. Sauvegarde: $BackupDir"
 }

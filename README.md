@@ -91,6 +91,28 @@ cd backend
 .\venv\Scripts\python.exe seed_training.py
 ```
 
+## Mise a jour du PC d'exploitation depuis GitHub
+
+Ce PC peut rester reserve au developpement et aux tests. Le PC d'exploitation
+possede sa propre base SQLite locale et recupere les mises a jour depuis GitHub.
+
+Sur le PC d'exploitation, double-cliquez sur:
+
+```text
+MAJ-GITHUB-SANS-PERTE.cmd
+```
+
+Le script sauvegarde et verifie `backend/proerp.db`, conserve `.env`, les
+reglages, les images, les fichiers de recherche et les backups, recupere la
+derniere version depuis GitHub, met a jour les dependances, migre seulement de
+maniere additive, puis installe le demarrage automatique Windows.
+
+Au prochain demarrage Windows, `LibrarySabri-Server` lance et surveille le
+serveur local sur `http://127.0.0.1:8015`, et `LibrarySabri-OpenChrome` ouvre
+l'application dans Chrome apres verification de `/health`.
+
+Le guide complet est dans [REMOTE_SERVER_SETUP.md](REMOTE_SERVER_SETUP.md).
+
 ## Domaines couverts
 
 - Vente comptoir et tickets POS.

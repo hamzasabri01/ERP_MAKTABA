@@ -95,6 +95,45 @@ function stockLabel(product) {
   return `${Math.floor(stock / factor)} ${product.sale_unit} + ${stock % factor} ${product.unit || 'pcs'}`
 }
 
+const ARABIC_TEXT = /[\u0600-\u06ff]/
+
+function ArabicProductName({ value }) {
+  const parts = String(value || '').trim().split(/(\d+(?:AC|M)|A[345]|3F|\d+)/gi).filter(Boolean)
+  return parts.map((part, index) => /^(?:\d+(?:AC|M)|A[345]|3F|\d+)$/i.test(part)
+    ? <bdi key={`${part}-${index}`} dir="ltr">{part.toUpperCase()}</bdi>
+    : <span key={`${part}-${index}`}>{part}</span>)
+}
+
+function productDisplayNames(product) {
+  const explicitArabic = String(product?.name_ar || product?.arabic_name || '').trim()
+  const explicitFrench = String(product?.name_fr || product?.french_name || '').trim()
+  if (explicitArabic || explicitFrench) {
+    return { arabic: explicitArabic, french: explicitFrench }
+  }
+
+  const name = String(product?.name || '').trim()
+  const parts = name.split(/\s+(?:—|–|\||\/)\s+|\s+-\s+/).map(part => part.trim()).filter(Boolean)
+  if (parts.length > 1) {
+    const arabic = parts.find(part => ARABIC_TEXT.test(part)) || ''
+    const french = parts.find(part => !ARABIC_TEXT.test(part)) || ''
+    if (arabic && french) return { arabic, french }
+  }
+
+  return ARABIC_TEXT.test(name) ? { arabic:name, french:'' } : { arabic:'', french:name }
+}
+
+function ProductName({ product }) {
+  const { arabic, french } = productDisplayNames(product)
+  const bilingual = Boolean(arabic && french)
+  return (
+    <strong className={`product-name ${bilingual ? 'is-bilingual' : ''}`}>
+      {arabic ? <span className="name-ar" dir="rtl" lang="ar"><ArabicProductName value={arabic} /></span> : null}
+      {bilingual ? <span className="separator" aria-hidden="true">—</span> : null}
+      {french ? <span className="name-fr" dir="ltr" lang="fr">{french}</span> : null}
+    </strong>
+  )
+}
+
 export default function POSPage() {
   const [searchParams] = useSearchParams()
   const confirm = useConfirm()
@@ -837,7 +876,7 @@ export default function POSPage() {
                       </span>
                     </div>
                     <span className="pos-product-code">{p.code || p.barcode || 'PROD'}</span>
-                    <strong>{p.name}</strong>
+                    <ProductName product={p} />
                     {secondarySaleEnabled(p) ? (
                       <span className="pos-product-dual-price">
                         <span className="pos-price-option">

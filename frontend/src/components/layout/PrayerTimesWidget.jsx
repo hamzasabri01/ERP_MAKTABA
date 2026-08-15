@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
-import { BellRing, Check, Clock3, MapPin, MoonStar, PauseCircle, Play, RefreshCw, Volume2, VolumeX, X } from 'lucide-react'
+import { AudioWaveform, BellRing, Clock3, MapPin, Moon, MoonStar, PauseCircle, Play, RefreshCw, ShieldCheck, SunMedium, Sunrise, Sunset, Volume2, VolumeX, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { storageGet, storageJson, storageSet } from '../../lib/safeStorage'
 
@@ -8,6 +8,7 @@ const PRAYERS = [
   ['Fajr', 'الفجر', 'Fajr'], ['Dhuhr', 'الظهر', 'Dhohr'], ['Asr', 'العصر', 'Asr'],
   ['Maghrib', 'المغرب', 'Maghrib'], ['Isha', 'العشاء', 'Icha'],
 ]
+const PRAYER_ICONS = { Fajr:Sunrise, Dhuhr:SunMedium, Asr:Sunrise, Maghrib:Sunset, Isha:Moon }
 const ENABLED_KEY = 'library-sabri:prayer-alerts'
 const PAUSE_KEY = 'library-sabri:prayer-pause-media'
 const EVENTS_KEY = 'library-sabri:prayer-events-v2'
@@ -167,10 +168,14 @@ export default function PrayerTimesWidget({ language = 'fr' }) {
 
   const countdown = nextPrayer
     ? nextPrayer.minutes <= 0 ? (language === 'ar' ? 'الآن' : 'Maintenant')
-      : nextPrayer.minutes < 60 ? `${nextPrayer.minutes} min`
-        : `${Math.floor(nextPrayer.minutes / 60)} h ${nextPrayer.minutes % 60} min`
+      : nextPrayer.minutes < 60 ? (language === 'ar' ? `${nextPrayer.minutes} د` : `${nextPrayer.minutes} min`)
+        : language === 'ar'
+          ? `${Math.floor(nextPrayer.minutes / 60)} س${nextPrayer.minutes % 60 ? ` و${nextPrayer.minutes % 60} د` : ''}`
+          : `${Math.floor(nextPrayer.minutes / 60)} h ${nextPrayer.minutes % 60} min`
     : '—'
   const label = language === 'ar' ? nextPrayer?.ar : nextPrayer?.fr
+  const volumePercent = Math.round(volume * 100)
+  const volumeFill = ((volumePercent - 15) / 85) * 100
 
   return (
     <div className="prayer-widget" ref={rootRef}>
@@ -195,22 +200,22 @@ export default function PrayerTimesWidget({ language = 'fr' }) {
           <div className="prayer-header-actions"><button type="button" className={loading ? 'is-loading' : ''} onClick={() => load()} disabled={loading} aria-label="Actualiser"><RefreshCw size={15}/></button><button type="button" onClick={() => setOpen(false)} aria-label="Fermer"><X size={16}/></button></div>
         </header>
         <div className="prayer-list">
-          {PRAYERS.map(([key, ar, fr]) => <div key={key} className={nextPrayer?.key === key ? 'is-next' : ''}><span>{language === 'ar' ? ar : fr}<small>{language === 'ar' ? key : ar}</small></span><strong>{data?.timings?.[key] || '--:--'}</strong>{nextPrayer?.key === key ? <i><Clock3 size={12}/> {language === 'ar' ? 'القادمة' : 'Suivante'}</i> : null}</div>)}
+          {PRAYERS.map(([key, ar, fr]) => { const PrayerIcon = PRAYER_ICONS[key]; return <div key={key} className={nextPrayer?.key === key ? 'is-next' : ''}><PrayerIcon className="prayer-time-icon" size={17}/><span>{language === 'ar' ? ar : fr}<small>{language === 'ar' ? key : ar}</small></span><strong>{data?.timings?.[key] || '--:--'}</strong>{nextPrayer?.key === key ? <i><Clock3 size={11}/> {language === 'ar' ? 'القادمة' : 'Suivante'}</i> : null}</div> })}
         </div>
-        <div className="prayer-next-summary"><MoonStar size={18}/><span><small>{language === 'ar' ? 'الصلاة القادمة' : 'Prochaine prière'}</small><b>{label || '—'} · {nextPrayer?.time || '--:--'}</b></span><strong>{countdown}</strong></div>
+        <div className="prayer-next-summary"><MoonStar size={18}/><span><small>{language === 'ar' ? 'الصلاة القادمة' : 'Prochaine prière'}</small><b>{label || '—'} · {nextPrayer?.time || '--:--'}</b></span><strong><small>{language === 'ar' ? 'بعد' : 'Dans'}</small>{countdown}</strong></div>
         <div className="prayer-options">
-          <label><input type="checkbox" checked={alertsEnabled} onChange={event => { setAlertsEnabled(event.target.checked); storageSet(ENABLED_KEY, String(event.target.checked)) }}/><span><BellRing size={16}/><b>{language === 'ar' ? 'إشعارات الأذان' : 'Alertes de prière'}</b><small>{language === 'ar' ? 'قبل الموعد بخمس دقائق وعند الأذان' : "5 minutes avant et à l’heure de l’adhan"}</small></span></label>
-          <label><input type="checkbox" checked={pauseMedia} onChange={event => { setPauseMedia(event.target.checked); storageSet(PAUSE_KEY, String(event.target.checked)) }}/><span><PauseCircle size={16}/><b>{language === 'ar' ? 'إيقاف الوسائط أثناء الأذان' : "Suspendre les médias pendant l’adhan"}</b><small>YouTube · Spotify · Windows</small></span></label>
-          <label className="prayer-volume"><Volume2 size={16}/><span><b>{language === 'ar' ? 'مستوى صوت الأذان' : "Volume de l’adhan"}</b><input type="range" min="15" max="100" value={Math.round(volume * 100)} onChange={event => { const next = Number(event.target.value) / 100; setVolume(next); storageSet(AUDIO_KEY, String(next)); if (audioRef.current) audioRef.current.volume = next }}/></span><strong>{Math.round(volume * 100)}%</strong></label>
+          <label><span className="prayer-option-icon"><BellRing size={17}/></span><span className="prayer-option-copy"><b>{language === 'ar' ? 'إشعارات الأذان' : 'Alertes de prière'}</b><small>{language === 'ar' ? 'قبل الموعد بخمس دقائق وعند الأذان' : "5 minutes avant et à l’heure de l’adhan"}</small></span><input type="checkbox" checked={alertsEnabled} aria-label={language === 'ar' ? 'إشعارات الأذان' : 'Alertes de prière'} onChange={event => { setAlertsEnabled(event.target.checked); storageSet(ENABLED_KEY, String(event.target.checked)) }}/></label>
+          <label><span className="prayer-option-icon"><PauseCircle size={17}/></span><span className="prayer-option-copy"><b>{language === 'ar' ? 'إيقاف الوسائط أثناء الأذان' : "Suspendre les médias pendant l’adhan"}</b><small>YouTube · Spotify · Windows</small></span><input type="checkbox" checked={pauseMedia} aria-label={language === 'ar' ? 'إيقاف الوسائط أثناء الأذان' : "Suspendre les médias pendant l’adhan"} onChange={event => { setPauseMedia(event.target.checked); storageSet(PAUSE_KEY, String(event.target.checked)) }}/></label>
+          <label className="prayer-volume"><span className="prayer-option-icon"><Volume2 size={17}/></span><b>{language === 'ar' ? 'مستوى صوت الأذان' : "Volume de l’adhan"}</b><input type="range" min="15" max="100" value={volumePercent} style={{ '--prayer-volume':`${volumeFill}%` }} aria-label={language === 'ar' ? 'مستوى صوت الأذان' : "Volume de l’adhan"} onChange={event => { const next = Number(event.target.value) / 100; setVolume(next); storageSet(AUDIO_KEY, String(next)); if (audioRef.current) audioRef.current.volume = next }}/><strong>{volumePercent}%</strong></label>
         </div>
-        {audioError ? <div className="prayer-audio-status is-error"><VolumeX size={15}/>{language === 'ar' ? 'تعذر تحميل ملف الأذان' : "Impossible de charger le fichier audio"}</div> : <div className={`prayer-audio-status${audioReady ? ' is-ready' : ''}`}><Volume2 size={15}/>{audioReady ? (language === 'ar' ? 'ملف الأذان جاهز' : 'Audio prêt') : (language === 'ar' ? 'جارٍ تجهيز الصوت…' : 'Préparation audio…')}</div>}
+        {audioError ? <div className="prayer-audio-status is-error"><VolumeX size={15}/>{language === 'ar' ? 'تعذر تحميل ملف الأذان' : "Impossible de charger le fichier audio"}</div> : <div className={`prayer-audio-status${audioReady ? ' is-ready' : ''}`}><AudioWaveform size={16}/>{audioReady ? (language === 'ar' ? 'ملف الأذان جاهز' : 'Audio prêt') : (language === 'ar' ? 'جارٍ تجهيز الصوت…' : 'Préparation audio…')}</div>}
         <div className="prayer-actions">
           <button type="button" className="btn btn-secondary btn-sm" onClick={requestNotifications}><BellRing size={14}/> {language === 'ar' ? 'إشعارات Windows' : 'Notifications Windows'}</button>
           {adhanActive
             ? <button type="button" className="btn btn-danger btn-sm" onClick={stopAdhan}><X size={14}/> {language === 'ar' ? 'إيقاف الأذان' : "Arrêter l’adhan"}</button>
             : <button type="button" className="btn btn-primary btn-sm" onClick={() => startAdhan(nextPrayer || { ar:'الصلاة', fr:'Prière' }, true)} disabled={audioError}><Play size={14}/> {language === 'ar' ? 'تجربة الأذان' : "Tester l’adhan"}</button>}
         </div>
-        <footer><Check size={12}/> {language === 'ar' ? 'طريقة الحساب الرسمية للمغرب' : 'Méthode officielle du Maroc'} · {data?.cached ? (language === 'ar' ? 'نسخة محفوظة' : 'Cache local') : (language === 'ar' ? 'محدّث اليوم' : "À jour aujourd’hui")}</footer>
+        <footer><ShieldCheck size={13}/> {language === 'ar' ? 'طريقة الحساب الرسمية للمغرب' : 'Méthode officielle du Maroc'} · {data?.cached ? (language === 'ar' ? 'نسخة محفوظة' : 'Cache local') : (language === 'ar' ? 'محدّث اليوم' : "À jour aujourd’hui")}</footer>
       </section> : null}
     </div>
   )

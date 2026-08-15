@@ -41,9 +41,26 @@ function Get-BackendHealth {
 
 function Test-FrontendHealth {
     try {
-        $response = Invoke-WebRequest "http://127.0.0.1:5173" -UseBasicParsing -TimeoutSec 3
-        return $response.StatusCode -eq 200
+        $response = Invoke-RestMethod "http://127.0.0.1:5173/api/health" -TimeoutSec 4
+        return $response.status -eq "ok"
     } catch { return $false }
+}
+
+function Set-LocalConnectionConfig {
+    $config = [ordered]@{
+        api_base_url = "/api"
+        maintenance_mode = $false
+        app_version = "1.0.0"
+    } | ConvertTo-Json
+    foreach ($path in @(
+        (Join-Path $FrontendDir "public\runtime-config.json"),
+        (Join-Path $FrontendDir "dist\runtime-config.json")
+    )) {
+        $parent = Split-Path -Parent $path
+        if (Test-Path $parent) {
+            [IO.File]::WriteAllText($path, $config, [Text.UTF8Encoding]::new($false))
+        }
+    }
 }
 
 Write-Host "`n===============================" -ForegroundColor Blue
@@ -54,6 +71,10 @@ if (-not (Test-Path $VenvPython)) {
     Write-Err "Python environment missing. Run setup.ps1 first."
     exit 1
 }
+
+# Always repair copied/old runtime configuration before launching. The browser
+# talks to /api on the same origin; Vite forwards it to the unified backend.
+Set-LocalConnectionConfig
 
 # Remove the temporary archive companion from older builds. Archives now use
 # the same authenticated backend and database connection on port 8010.
@@ -110,7 +131,7 @@ if ($ForceRestart -or -not $frontendHealthy) {
     $FrontendErr = Join-Path $RuntimeDir "frontend.err.log"
     Remove-Item -LiteralPath $FrontendOut,$FrontendErr -Force -ErrorAction SilentlyContinue
     $frontendProc = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList "/c", "npm run dev -- --host 0.0.0.0 --port 5173 --strictPort" `
+        -ArgumentList "/c", "set VITE_API_BASE_URL=/api&& set VITE_API_PROXY_TARGET=http://127.0.0.1:$BackendPort&& npm run dev -- --host 0.0.0.0 --port 5173 --strictPort" `
         -WorkingDirectory $FrontendDir `
         -RedirectStandardOutput $FrontendOut `
         -RedirectStandardError $FrontendErr `

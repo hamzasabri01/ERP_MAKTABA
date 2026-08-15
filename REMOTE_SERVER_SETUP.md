@@ -1,61 +1,105 @@
-# ProERP Remote Local Server
+# تحديث كمبيوتر الاستغلال من GitHub بدون فقدان قاعدة البيانات
 
-This setup puts ProERP on another Windows computer while keeping the main SQLite database local on that remote computer.
+هذا هو المسار المعتمد:
 
-## Architecture
+- هذا الكمبيوتر: تطوير، اختبار، ثم `git push` إلى GitHub.
+- الكمبيوتر الآخر: يستقبل التحديث من GitHub، وله قاعدة بياناته الخاصة.
+- لا ننقل قاعدة البيانات بين الجهازين، ولا نفتح ملف SQLite عبر الشبكة.
 
-- Remote computer: runs the backend, serves the frontend, and stores `backend/proerp.db`.
-- Your current computer: keeps the source code and pushes updates to the remote computer.
-- Phone/tablet on the same Wi-Fi: opens `http://REMOTE-IP:8015`.
+## أول تثبيت على الكمبيوتر الآخر
 
-This avoids temporary Cloudflare links for local use.
-
-## One-time setup on the remote computer
-
-Open PowerShell as Administrator on the remote computer:
+افتح PowerShell داخل مجلد التطبيق على الكمبيوتر الآخر، ثم شغل:
 
 ```powershell
-Enable-PSRemoting -Force
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-Make sure Python 3 is installed on the remote computer.
+بعد ذلك استعمل سكربت التحديث الآمن دائمًا، ولا تعيد تشغيل `setup.ps1` إلا
+لتثبيت جديد تمامًا.
 
-If Windows Firewall asks, allow private network access for Python.
+## إرسال تحديث من هذا الكمبيوتر
 
-## One-time setup on this computer
-
-If both computers are in the same Windows workgroup, run PowerShell as Administrator:
+بعد إنهاء التطوير والاختبارات على هذا الكمبيوتر:
 
 ```powershell
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value "REMOTE-IP" -Force
+git add .
+git commit -m "Update application"
+git push origin main
 ```
 
-Replace `REMOTE-IP` with the remote computer IP, for example `192.168.1.50`.
+## استقبال التحديث على الكمبيوتر الآخر
 
-## Deploy or update
-
-From this project folder:
-
-```powershell
-.\scripts\deploy-remote-server.ps1 -ComputerName 192.168.1.50 -Credential (Get-Credential)
-```
-
-The script:
-
-- builds the frontend,
-- copies app code to `C:\ProERP-Web` on the remote computer,
-- preserves `backend/proerp.db`, `backend/.env`, and uploads,
-- installs backend dependencies,
-- restarts the backend on port `8015`.
-
-Open:
+على الكمبيوتر الآخر، من مجلد التطبيق نفسه، انقر مرتين على:
 
 ```text
-http://192.168.1.50:8015
+MAJ-GITHUB-SANS-PERTE.cmd
 ```
 
-On phone, use the same URL while connected to the same Wi-Fi.
+أو شغل:
 
-## Important
+```powershell
+powershell -ExecutionPolicy Bypass -File .\update-existing.ps1
+```
 
-Do not manually delete `C:\ProERP-Web\backend\proerp.db` on the remote computer. That is the main local database.
+السكربت يقوم بالآتي:
+
+1. يوقف التطبيق مؤقتًا.
+2. يأخذ نسخة SQLite متسقة من `backend\proerp.db`، بما في ذلك بيانات WAL
+   الملتزمة.
+3. يحفظ `backend\.env`, `backend\company_settings.json`, `backend\uploads`,
+   `backend\data`, و`backend\backups`.
+4. يجلب آخر نسخة من GitHub عبر `git fetch` ثم يحدّث الكود.
+5. يرجع قاعدة البيانات والملفات المحلية إلى مكانها.
+6. يثبت dependencies، يبني الواجهة، ويطبّق migrations الإضافية فقط.
+7. يتحقق أن عدد السجلات والمجاميع التجارية لم تنقص أو تتغير.
+8. يثبت تشغيل Windows التلقائي ويفتح التطبيق في Chrome.
+
+إذا وقع خطأ، يرجع السكربت النسخة السابقة والبيانات السابقة تلقائيًا.
+نسخ الأمان محفوظة هنا:
+
+```text
+%LOCALAPPDATA%\LibrarySabri\upgrade-backups
+```
+
+## التشغيل التلقائي بعد تحديث الكمبيوتر الآخر
+
+بعد نجاح التحديث، يتم تثبيت مهمتين في Windows Task Scheduler:
+
+- `LibrarySabri-Server`: تبدأ مع Windows، تشغل الخادم المحلي على المنفذ `8015`
+  وتراقبه. إذا توقف الخادم، تعيد تشغيله.
+- `LibrarySabri-OpenChrome`: تعمل عند دخول المستخدم، تنتظر نجاح الاتصال ثم
+  تفتح التطبيق في Google Chrome.
+
+العنوان المحلي على الكمبيوتر الآخر:
+
+```text
+http://127.0.0.1:8015/erp
+```
+
+ومن جهاز آخر في نفس الشبكة، استعمل IP الكمبيوتر الآخر:
+
+```text
+http://192.168.1.50:8015/erp
+```
+
+## إصلاح التشغيل التلقائي يدويًا
+
+إذا كان الكود محدثًا لكن التشغيل مع Windows لا يعمل، افتح PowerShell كمسؤول
+على الكمبيوتر الآخر:
+
+```powershell
+.\scripts\install-lan-erp-startup.ps1 -Port 8015 -OpenFirewall
+```
+
+لإزالة التشغيل التلقائي دون حذف قاعدة البيانات:
+
+```powershell
+.\scripts\uninstall-lan-erp-startup.ps1
+```
+
+## مهم جدًا
+
+- لا تحذف `backend\proerp.db` من الكمبيوتر الآخر.
+- لا تنسخ قاعدة هذا الكمبيوتر فوق قاعدة الكمبيوتر الآخر.
+- لا تضع قاعدة SQLite داخل مجلد شبكة مشترك.
+- يفضّل أن يكون مجلد التطبيق على الكمبيوتر الآخر خارج OneDrive.

@@ -120,7 +120,8 @@ export function csrfHeaders() {
 }
 
 export function applyApiBaseUrl(baseURL) {
-  api.defaults.baseURL = baseURL || '/api'
+  const value = String(baseURL || '/api').trim()
+  api.defaults.baseURL = value === '/' ? '/api' : value.replace(/\/+$/, '')
 }
 
 export function resolveMediaUrl(path) {
@@ -212,6 +213,12 @@ export function apiErrorMessage(error, fallback = 'Une erreur est survenue') {
   if (detail && typeof detail === 'object') {
     const message = detail.message || detail.msg
     if (message) return String(message)
+  }
+  if (!error?.response && (error?.code === 'ERR_NETWORK' || error?.message === 'Network Error')) {
+    return 'Connexion au serveur impossible. Vérifiez que le serveur est démarré puis réessayez.'
+  }
+  if (error?.code === 'ECONNABORTED') {
+    return 'Le serveur met trop de temps à répondre. Réessayez dans un instant.'
   }
   if (typeof error?.message === 'string' && error.message.trim()) return error.message
   return fallback

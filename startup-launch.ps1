@@ -28,10 +28,10 @@ try {
             }
         } catch {}
         try {
-            $Client = [Net.Sockets.TcpClient]::new()
-            $ConnectTask = $Client.ConnectAsync("127.0.0.1", 5173)
-            $FrontendHealthy = $ConnectTask.Wait(3000) -and $Client.Connected
-            $Client.Dispose()
+            # This verifies browser -> Vite proxy -> backend, not only that the
+            # frontend port is open.
+            $health = Invoke-RestMethod "http://127.0.0.1:5173/api/health" -TimeoutSec 4
+            $FrontendHealthy = $health.status -eq "ok"
         } catch {}
 
         if (-not $BackendHealthy -or -not $FrontendHealthy) {

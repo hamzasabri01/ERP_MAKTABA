@@ -6,6 +6,9 @@ const NAVY = [20, 49, 73]
 const MUTED = [91, 113, 128]
 const LINE = [216, 230, 233]
 const PAPER = [248, 251, 252]
+const ARABIC_TEXT = /[\u0600-\u06ff]/
+const PDF_ARABIC_FONT = 'AmiriPdf'
+let arabicFontBinaryPromise
 
 function safeName(value, fallback) {
   return String(value || fallback).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
@@ -63,6 +66,78 @@ function money(value, currency) {
 function partyName(value, fallback) {
   const clean = String(value || '').trim()
   return !clean || clean === '—' || clean === '-' ? fallback : clean
+}
+
+function arrayBufferToBinary(buffer) {
+  const bytes = new Uint8Array(buffer)
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return binary
+}
+
+async function registerArabicPdfFont(doc) {
+  try {
+    arabicFontBinaryPromise ||= fetch('/fonts/amiri/Amiri-Regular.ttf')
+      .then(response => {
+        if (!response.ok) throw new Error('Arabic PDF font unavailable')
+        return response.arrayBuffer()
+      })
+      .then(arrayBufferToBinary)
+    const binary = await arabicFontBinaryPromise
+    doc.addFileToVFS('Amiri-Regular.ttf', binary)
+    doc.addFont('Amiri-Regular.ttf', PDF_ARABIC_FONT, 'normal')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function bilingualProductName(value) {
+  const name = String(value || 'Article').trim()
+  const parts = name.split(/\s+(?:—|–|\||\/)\s+|\s+-\s+/).map(part => part.trim()).filter(Boolean)
+  const arabic = parts.find(part => ARABIC_TEXT.test(part)) || (ARABIC_TEXT.test(name) ? name : '')
+  const french = parts.find(part => !ARABIC_TEXT.test(part)) || (!ARABIC_TEXT.test(name) ? name : '')
+  return { arabic, french, fallback:name }
+}
+
+function pdfProductCell(value) {
+  const names = bilingualProductName(value)
+  return {
+    content:'',
+    _productNames:names,
+    styles:{ minCellHeight:names.arabic && names.french ? 14 : 9 },
+  }
+}
+
+function drawProductNameCell(doc, cell, names, hasArabicFont) {
+  const left = cell.x + 3
+  const right = cell.x + cell.width - 3
+  const centerY = cell.y + cell.height / 2
+  if (names.arabic && names.french) {
+    doc.setFont(hasArabicFont ? PDF_ARABIC_FONT : 'helvetica', 'normal')
+    doc.setFontSize(9.2)
+    doc.setTextColor(...NAVY)
+    doc.text(names.arabic, right, centerY - 1.3, { align:'right' })
+    doc.setDrawColor(221, 231, 236)
+    doc.setLineWidth(.18)
+    doc.line(left, centerY + .4, right, centerY + .4)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.3)
+    doc.setTextColor(...MUTED)
+    doc.text(names.french, left, centerY + 4.2, { align:'left', maxWidth:cell.width - 6 })
+    return
+  }
+  const text = names.arabic || names.french || names.fallback
+  doc.setFont(names.arabic && hasArabicFont ? PDF_ARABIC_FONT : 'helvetica', names.arabic ? 'normal' : 'bold')
+  doc.setFontSize(names.arabic ? 9.2 : 8)
+  doc.setTextColor(...NAVY)
+  doc.text(text, names.arabic ? right : left, centerY + 1.4, {
+    align:names.arabic ? 'right' : 'left',
+    maxWidth:cell.width - 6,
+  })
 }
 
 function drawHeader(doc, { title, number, date, user, settings, logo, arabicBrand, wordmark }) {
@@ -198,6 +273,7 @@ async function pdfTools() {
 async function createSalePdf(sale, settings = {}) {
   const { jsPDF, autoTable } = await pdfTools()
   const doc = new jsPDF({ unit:'mm', format:'a4', compress:true })
+  const hasArabicFont = await registerArabicPdfFont(doc)
   const currency = sale.currency_code || settings.currency || 'MAD'
   const vat = isVatEnabled(settings)
   const logo = await imageData(getLogoUrl(settings))
@@ -220,7 +296,7 @@ async function createSalePdf(sale, settings = {}) {
 
   const head = [['DÉSIGNATION', 'QTÉ', 'PU HT', 'REMISE', ...(vat ? ['TVA'] : []), 'TOTAL']]
   const body = (sale.items || []).map(item => [
-    item.product_name || item.description || 'Article',
+    pdfProductCell(item.product_name || item.description || 'Article'),
     `${fmt(item.quantity, 0)} ${item.sale_unit || ''}`.trim(),
     money(item.unit_price, currency),
     `${fmt(item.discount || 0)} %`,
@@ -233,16 +309,21 @@ async function createSalePdf(sale, settings = {}) {
     body,
     theme:'plain',
     margin:{ left:14, right:14, bottom:28 },
-    styles:{ font:'helvetica', fontSize:8, cellPadding:2.7, textColor:NAVY, lineColor:LINE, lineWidth:{ bottom:.15 } },
+    styles:{ font:'helvetica', fontSize:8, cellPadding:2.7, overflow:'linebreak', textColor:NAVY, lineColor:LINE, lineWidth:{ bottom:.15 } },
     headStyles:{ fillColor:BLUE, textColor:[255,255,255], fontStyle:'bold', cellPadding:3.2 },
     columnStyles:{
-      0:{ cellWidth:'auto' },
+      0:{ cellWidth:'auto', font:hasArabicFont ? PDF_ARABIC_FONT : 'helvetica', fontSize:9, cellPadding:{ top:2.2, right:2.7, bottom:2.2, left:2.7 } },
       1:{ halign:'center', cellWidth:15 },
       2:{ halign:'right', cellWidth:27 },
       3:{ halign:'center', cellWidth:21 },
       ...(vat ? { 4:{ halign:'center', cellWidth:17 }, 5:{ halign:'right', cellWidth:29 } } : { 4:{ halign:'right', cellWidth:31 } }),
     },
     alternateRowStyles:{ fillColor:PAPER },
+    didDrawCell:data => {
+      if (data.section === 'body' && data.column.index === 0 && data.cell.raw?._productNames) {
+        drawProductNameCell(doc, data.cell, data.cell.raw._productNames, hasArabicFont)
+      }
+    },
   })
   const totals = [['Sous-total HT', sale.subtotal]]
   if (vat) totals.push(['TVA', sale.tax_amount])
@@ -255,6 +336,7 @@ async function createSalePdf(sale, settings = {}) {
 async function createPurchasePdf(purchase, settings = {}) {
   const { jsPDF, autoTable } = await pdfTools()
   const doc = new jsPDF({ unit:'mm', format:'a4', compress:true })
+  const hasArabicFont = await registerArabicPdfFont(doc)
   const currency = purchase.currency_code || settings.currency || 'MAD'
   const vat = isVatEnabled(settings)
   const logo = await imageData(getLogoUrl(settings))
@@ -269,7 +351,7 @@ async function createPurchasePdf(purchase, settings = {}) {
   ])
   const head = [['DÉSIGNATION', 'QTÉ', 'UNITÉ', 'PU HT', ...(vat ? ['TVA'] : []), 'TOTAL']]
   const body = (purchase.items || []).map(item => [
-    item.product_name || item.description || 'Article',
+    pdfProductCell(item.product_name || item.description || 'Article'),
     fmt(item.quantity, 0),
     item.purchase_unit || 'pcs',
     money(item.unit_price, currency),
@@ -282,16 +364,21 @@ async function createPurchasePdf(purchase, settings = {}) {
     body,
     theme:'plain',
     margin:{ left:14, right:14, bottom:28 },
-    styles:{ font:'helvetica', fontSize:8, cellPadding:2.7, textColor:NAVY, lineColor:LINE, lineWidth:{ bottom:.15 } },
+    styles:{ font:'helvetica', fontSize:8, cellPadding:2.7, overflow:'linebreak', textColor:NAVY, lineColor:LINE, lineWidth:{ bottom:.15 } },
     headStyles:{ fillColor:BLUE, textColor:[255,255,255], fontStyle:'bold', cellPadding:3.2 },
     columnStyles:{
-      0:{ cellWidth:'auto' },
+      0:{ cellWidth:'auto', font:hasArabicFont ? PDF_ARABIC_FONT : 'helvetica', fontSize:9, cellPadding:{ top:2.2, right:2.7, bottom:2.2, left:2.7 } },
       1:{ halign:'center', cellWidth:15 },
       2:{ halign:'center', cellWidth:22 },
       3:{ halign:'right', cellWidth:29 },
       ...(vat ? { 4:{ halign:'center', cellWidth:17 }, 5:{ halign:'right', cellWidth:29 } } : { 4:{ halign:'right', cellWidth:31 } }),
     },
     alternateRowStyles:{ fillColor:PAPER },
+    didDrawCell:data => {
+      if (data.section === 'body' && data.column.index === 0 && data.cell.raw?._productNames) {
+        drawProductNameCell(doc, data.cell, data.cell.raw._productNames, hasArabicFont)
+      }
+    },
   })
   const totals = [['Sous-total HT', purchase.subtotal]]
   if (vat) totals.push(['TVA', purchase.tax_amount])
