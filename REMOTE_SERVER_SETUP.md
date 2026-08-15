@@ -97,6 +97,26 @@ http://192.168.1.50:8015/erp
 .\scripts\uninstall-lan-erp-startup.ps1
 ```
 
+## مشاكل الاتصال بعد تشغيل Windows
+
+إذا ظهرت رسائل مثل:
+
+```text
+Ce site est inaccessible
+Le tunnel HTTPS du scanner est temporairement indisponible.
+```
+
+فالنسخة الحالية تعالجها عند الإقلاع عبر `LibrarySabri-Server`: ينظف نفق
+scanner القديم، يشغل الخادم، ينتظر `/health` وصفحة `/erp`، ثم يحاول تهيئة
+نفق scanner. إذا توقف الخادم لاحقًا، يعيد watchdog تشغيله تلقائيًا.
+
+لإصلاح سريع يدويًا على الكمبيوتر الآخر:
+
+```powershell
+.\scripts\install-lan-erp-startup.ps1 -Port 8015 -OpenFirewall
+Start-ScheduledTask -TaskName LibrarySabri-Server
+```
+
 ## مهم جدًا
 
 - لا تحذف `backend\proerp.db` من الكمبيوتر الآخر.

@@ -37,7 +37,11 @@ function Write-Log([string]$Level, [string]$Message) {
 function Test-Health {
   try {
     $Health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 4
-    return $Health.status -eq "ok" -and @($Health.capabilities) -contains "document_archive"
+    if (-not ($Health.status -eq "ok" -and @($Health.capabilities) -contains "document_archive")) {
+      return $false
+    }
+    $Page = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/erp" -UseBasicParsing -TimeoutSec 6
+    return $Page.StatusCode -eq 200
   } catch {
     return $false
   }

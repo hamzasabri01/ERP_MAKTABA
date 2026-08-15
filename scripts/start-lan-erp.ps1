@@ -46,6 +46,56 @@ function Get-ServerHealth {
   return $null
 }
 
+function Test-AppPage {
+  try {
+    $Response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/erp" -UseBasicParsing -TimeoutSec 6
+    return $Response.StatusCode -eq 200
+  } catch {
+    return $false
+  }
+}
+
+function Stop-StaleScannerTunnel {
+  $Processes = @()
+  try {
+    $Processes = @(
+      Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue
+    )
+  } catch {}
+
+  foreach ($ProcessInfo in $Processes) {
+    $CommandLine = [string]$ProcessInfo.CommandLine
+    if ($CommandLine -match "trycloudflare|127\.0\.0\.1|localhost|8010|8015") {
+      try {
+        Stop-Process -Id $ProcessInfo.ProcessId -Force -ErrorAction Stop
+        Write-WarnMessage "Stopped stale scanner HTTPS tunnel process $($ProcessInfo.ProcessId)."
+      } catch {}
+    }
+  }
+}
+
+function Invoke-ScannerTunnelWarmup {
+  $Endpoints = @(
+    "/api/mobile-scanner/status",
+    "/api/mobile-scanner/tunnel/status",
+    "/api/mobile-scanner/tunnel"
+  )
+
+  for ($Attempt = 1; $Attempt -le 12; $Attempt++) {
+    foreach ($Endpoint in $Endpoints) {
+      try {
+        $Response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port$Endpoint" -UseBasicParsing -TimeoutSec 5
+        if ($Response.StatusCode -ge 200 -and $Response.StatusCode -lt 500) {
+          Write-Info "Scanner HTTPS tunnel check completed via $Endpoint."
+          return
+        }
+      } catch {}
+    }
+    Start-Sleep -Seconds 2
+  }
+  Write-WarnMessage "Scanner HTTPS tunnel did not report ready yet; backend watchdog will keep monitoring."
+}
+
 function Get-ListeningProcessIds {
   $Result = @()
   if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
@@ -177,6 +227,7 @@ if ($ExistingHealth -and -not $ForceRestart) {
 } else {
   if ($ExistingHealth) { Write-Info "Restarting the existing Library Sabri server..." }
   Stop-OwnedServer
+  Stop-StaleScannerTunnel
 
   Remove-Item -LiteralPath $OutLog, $ErrLog -Force -ErrorAction SilentlyContinue
   Write-Info "Starting Library Sabri on 0.0.0.0:$Port..."
@@ -206,6 +257,16 @@ if ($ExistingHealth -and -not $ForceRestart) {
   }
   Write-Good "Server ready (PID $($ServerProcess.Id), version $($Health.version))."
 }
+
+for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
+  if (Test-AppPage) { break }
+  Start-Sleep -Seconds 1
+}
+if (-not (Test-AppPage)) {
+  throw "Application page is not reachable on http://127.0.0.1:$Port/erp."
+}
+
+Invoke-ScannerTunnelWarmup
 
 $LanAddress = $null
 try {
