@@ -29,6 +29,44 @@ function Info($message) { Write-Host "[INFO] $message" -ForegroundColor Cyan }
 function Good($message) { Write-Host "[OK]   $message" -ForegroundColor Green }
 function Warn($message) { Write-Host "[WARN] $message" -ForegroundColor Yellow }
 
+function Remove-GitCheckoutBlocker([string]$RelativePath) {
+    # Some Windows/OneDrive installations leave script files as reparse-point
+    # placeholders. Git can then fail with "unable to create file ...: File
+    # exists" during reset. Only remove repository code files, never runtime
+    # data/database paths.
+    if ($RelativePath -match '^(backend[\\/](proerp\.db|uploads|data|backups|company_settings\.json)|backend[\\/]\.env)($|[\\/])') {
+        return
+    }
+    $target = Join-Path $ScriptDir $RelativePath
+    if (-not (Test-Path -LiteralPath $target)) { return }
+    try {
+        $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.PSIsContainer) {
+            Warn "Nettoyage d'un fichier Git bloque: $RelativePath"
+            Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop
+        }
+    } catch {
+        Warn "Impossible de nettoyer $RelativePath automatiquement: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-GitResetHardSafe([string]$Revision) {
+    foreach ($blocker in @(
+        "install-autostart.ps1",
+        "startup-launch.ps1",
+        "start.ps1",
+        "stop.ps1",
+        "update-existing.ps1",
+        "MAJ-GITHUB-SANS-PERTE.cmd",
+        "APPLIQUER-CORRECTION-SCANNER.cmd"
+    )) {
+        Remove-GitCheckoutBlocker $blocker
+    }
+    git clean -fd -- install-autostart.ps1 startup-launch.ps1 start.ps1 stop.ps1 update-existing.ps1 MAJ-GITHUB-SANS-PERTE.cmd APPLIQUER-CORRECTION-SCANNER.cmd | Out-Null
+    git reset --hard $Revision
+    return $LASTEXITCODE
+}
+
 function Copy-PreservedItem([string]$RelativePath) {
     $source = Join-Path $ScriptDir $RelativePath
     if (-not (Test-Path -LiteralPath $source)) { return }
@@ -90,7 +128,7 @@ try {
     Info "Telechargement de la nouvelle version..."
     git fetch $Remote $Branch --prune
     if ($LASTEXITCODE -ne 0) { throw "Echec du telechargement Git." }
-    git reset --hard "$Remote/$Branch"
+    Invoke-GitResetHardSafe "$Remote/$Branch" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Echec de mise a jour du code." }
 
     # Restore local data even if a future repository version accidentally
@@ -141,7 +179,7 @@ try {
 } catch {
     Write-Host "[ERREUR] $($_.Exception.Message)" -ForegroundColor Red
     Warn "Restauration automatique de la version et des donnees precedentes..."
-    if ($OldCommit) { git reset --hard $OldCommit | Out-Null }
+    if ($OldCommit) { Invoke-GitResetHardSafe $OldCommit | Out-Null }
     if (Test-Path $DatabaseBackup) { Copy-Item -LiteralPath $DatabaseBackup -Destination $Database -Force }
     foreach ($item in @("backend\.env", "backend\company_settings.json", "backend\uploads", "backend\data", "backend\backups")) {
         Restore-PreservedItem $item
