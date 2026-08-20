@@ -75,6 +75,15 @@ function Stop-StaleScannerTunnel {
 }
 
 function Invoke-ScannerTunnelWarmup {
+  $EnsureCloudflared = Join-Path $PSScriptRoot "ensure-cloudflared.ps1"
+  if (Test-Path -LiteralPath $EnsureCloudflared -PathType Leaf) {
+    try {
+      & $EnsureCloudflared 2>&1 | ForEach-Object { Write-Info ([string]$_) }
+    } catch {
+      Write-WarnMessage "cloudflared automatic installation failed: $($_.Exception.Message)"
+    }
+  }
+
   $Endpoints = @(
     "/api/mobile-scanner/status",
     "/api/mobile-scanner/tunnel/status",
@@ -231,6 +240,8 @@ if ($ExistingHealth -and -not $ForceRestart) {
 
   Remove-Item -LiteralPath $OutLog, $ErrLog -Force -ErrorAction SilentlyContinue
   Write-Info "Starting Library Sabri on 0.0.0.0:$Port..."
+  $env:LIBRARY_SABRI_PORT = [string]$Port
+  $env:SCANNER_TUNNEL_TARGET = "http://127.0.0.1:$Port"
   $ServerProcess = Start-Process `
     -FilePath $Python `
     -ArgumentList "-m uvicorn main:app --host 0.0.0.0 --port $Port --no-proxy-headers" `

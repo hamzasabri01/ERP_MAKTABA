@@ -10,13 +10,14 @@ if (-not $Elevated) {
         "-File", "`"$PSCommandPath`"",
         "-Elevated"
     )
-    Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $arguments
+    $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    Start-Process -FilePath $windowsPowerShell -Verb RunAs -ArgumentList $arguments
     exit
 }
 
 Set-Location -LiteralPath $ProjectDir
 
-foreach ($port in @(8000, 8001, 5173)) {
+foreach ($port in @(8000, 8001, 5173, 8010)) {
     Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess -Unique |
         ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
@@ -34,4 +35,7 @@ if (Test-Path -LiteralPath $tunnelPidFile) {
 Get-Process cloudflared -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-& (Join-Path $ProjectDir "start.ps1") -ForceRestart
+& (Join-Path $ProjectDir "scripts\ensure-cloudflared.ps1")
+& (Join-Path $ProjectDir "scripts\install-lan-erp-startup.ps1") -Port 8015 -OpenFirewall -NoImmediateOpen
+& (Join-Path $ProjectDir "scripts\start-lan-erp.ps1") -Port 8015 -NoBuild -OpenFirewall -ForceRestart
+Start-ScheduledTask -TaskName "LibrarySabri-Server" -ErrorAction SilentlyContinue

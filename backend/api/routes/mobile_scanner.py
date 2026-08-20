@@ -29,7 +29,8 @@ _lock = Lock()
 _TUNNEL_LOG = Path(__file__).resolve().parents[3] / ".runtime" / "scanner-tunnel.err.log"
 _TUNNEL_OUT = Path(__file__).resolve().parents[3] / ".runtime" / "scanner-tunnel.out.log"
 _TUNNEL_PID = Path(__file__).resolve().parents[3] / ".runtime" / "scanner-tunnel.pid"
-_CLOUDFLARED = Path(__file__).resolve().parents[3] / "tools" / "cloudflared.exe"
+_ROOT = Path(__file__).resolve().parents[3]
+_CLOUDFLARED = _ROOT / "tools" / "cloudflared.exe"
 _SESSION_STORE = Path(__file__).resolve().parents[3] / ".runtime" / "mobile-scanner-sessions.json"
 _tunnel_lock = Lock()
 _tunnel_stop = Event()
@@ -122,6 +123,47 @@ def _read_public_scanner_url() -> str:
         return ""
 
 
+def _cloudflared_path() -> Path | None:
+    """Find cloudflared even when Windows PATH is not available to Task Scheduler."""
+    candidates: list[Path] = []
+    configured = os.environ.get("CLOUDFLARED_PATH", "").strip().strip('"')
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([
+        _ROOT / "tools" / "cloudflared.exe",
+        Path(__file__).resolve().parents[2] / "tools" / "cloudflared.exe",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "cloudflared" / "cloudflared.exe",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Cloudflare" / "cloudflared.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages" / "Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe" / "cloudflared.exe",
+    ])
+    for candidate in candidates:
+        try:
+            if candidate and candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = Path(directory) / ("cloudflared.exe" if sys.platform == "win32" else "cloudflared")
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _scanner_tunnel_target() -> str:
+    configured = os.environ.get("SCANNER_TUNNEL_TARGET", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    port = os.environ.get("LIBRARY_SABRI_PORT", "").strip() or os.environ.get("PORT", "").strip() or "8015"
+    if not port.isdigit():
+        port = "8015"
+    return f"http://127.0.0.1:{port}"
+
+
 def _tunnel_process_alive() -> bool:
     try:
         pid = int(_TUNNEL_PID.read_text(encoding="ascii").strip())
@@ -210,7 +252,8 @@ def _stop_managed_tunnel() -> None:
 
 def _restart_tunnel() -> bool:
     """Create a fresh Quick Tunnel and wait briefly for its public URL."""
-    if not _CLOUDFLARED.is_file():
+    cloudflared = _cloudflared_path()
+    if not cloudflared:
         return False
     with _tunnel_lock:
         existing = _public_scanner_url()
@@ -225,8 +268,8 @@ def _restart_tunnel() -> bool:
                 creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 process = subprocess.Popen(
                     [
-                        str(_CLOUDFLARED), "tunnel", "--protocol", "http2",
-                        "--url", "http://127.0.0.1:8010", "--no-autoupdate",
+                        str(cloudflared), "tunnel", "--protocol", "http2",
+                        "--url", _scanner_tunnel_target(), "--no-autoupdate",
                     ],
                     stdout=stdout,
                     stderr=stderr,
@@ -266,6 +309,23 @@ def _available_public_scanner_url() -> str:
     return _public_scanner_url()
 
 
+def _tunnel_status_payload(start_if_missing: bool = False) -> dict:
+    cloudflared = _cloudflared_path()
+    public_url = _public_scanner_url(timeout=2)
+    if start_if_missing and cloudflared and not public_url:
+        _restart_tunnel()
+        public_url = _public_scanner_url(timeout=2)
+    return {
+        "cloudflared_available": bool(cloudflared),
+        "cloudflared_path": str(cloudflared) if cloudflared else "",
+        "target": _scanner_tunnel_target(),
+        "running": _tunnel_process_alive(),
+        "registered": _tunnel_registered(),
+        "public_url": public_url,
+        "ready": bool(public_url),
+    }
+
+
 def _tunnel_supervisor_loop() -> None:
     """Replace expired Quick Tunnels without waiting for a scanner click."""
     failures = 0
@@ -282,7 +342,7 @@ def _tunnel_supervisor_loop() -> None:
 
 def start_tunnel_supervisor() -> None:
     global _tunnel_supervisor
-    if not _CLOUDFLARED.is_file() or (_tunnel_supervisor and _tunnel_supervisor.is_alive()):
+    if not _cloudflared_path() or (_tunnel_supervisor and _tunnel_supervisor.is_alive()):
         return
     _tunnel_stop.clear()
     _tunnel_supervisor = Thread(
@@ -319,6 +379,21 @@ def create_session(request: Request, user=Depends(get_current_user)):
         "request_port": request.url.port,
         "public_url": _available_public_scanner_url(),
     }
+
+
+@router.get("/status")
+def mobile_scanner_status():
+    return {"active_sessions": len(_sessions), **_tunnel_status_payload(start_if_missing=False)}
+
+
+@router.get("/tunnel/status")
+def tunnel_status():
+    return _tunnel_status_payload(start_if_missing=False)
+
+
+@router.get("/tunnel")
+def ensure_tunnel():
+    return _tunnel_status_payload(start_if_missing=True)
 
 
 @router.get("/sessions/{token}")
