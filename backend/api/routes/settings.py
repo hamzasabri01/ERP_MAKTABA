@@ -11,9 +11,14 @@ from sqlalchemy.orm import Session
 router = APIRouter()
 SETTINGS_FILE = BASE_DIR / "company_settings.json"
 DEFAULTS = CompanySettings().model_dump()
+OFFICIAL_CONTACT_FIELDS = ("address", "phone", "email")
 
 def _load():
-    return load_settings(DEFAULTS, path=SETTINGS_FILE)
+    settings = load_settings(DEFAULTS, path=SETTINGS_FILE)
+    for field in OFFICIAL_CONTACT_FIELDS:
+        if not str(settings.get(field) or "").strip():
+            settings[field] = DEFAULTS[field]
+    return settings
 
 @router.get("")
 def get_settings(user=Depends(get_current_user)):

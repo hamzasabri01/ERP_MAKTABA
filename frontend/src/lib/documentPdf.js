@@ -140,7 +140,7 @@ function drawProductNameCell(doc, cell, names, hasArabicFont) {
   })
 }
 
-function drawHeader(doc, { title, number, date, user, settings, logo, arabicBrand, wordmark }) {
+function drawHeader(doc, { title, number, date, user, settings, logo, arabicBrand, wordmark, hasArabicFont }) {
   if (wordmark) {
     try { doc.addImage(wordmark, 'PNG', 14, 7, 86, 28.7, undefined, 'FAST') } catch { /* fallback below */ }
   } else if (logo) {
@@ -157,10 +157,26 @@ function drawHeader(doc, { title, number, date, user, settings, logo, arabicBran
     }
   }
   doc.setTextColor(...MUTED)
+  const companyDetailsCenterX = 57
+  if (settings.address) {
+    const addressIsArabic = /[\u0600-\u06FF]/.test(settings.address)
+    doc.setFont(addressIsArabic && hasArabicFont ? PDF_ARABIC_FONT : 'helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.text(settings.address, companyDetailsCenterX, 36.5, {
+      align: 'center',
+      maxWidth: 86,
+    })
+  }
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8.5)
-  const companyLine = [settings.address, settings.phone].filter(Boolean).join('  •  ')
-  if (companyLine) doc.text(companyLine, 14, 39)
+  doc.setFontSize(7.2)
+  const contactLine = [
+    settings.phone ? `Tel : ${settings.phone}` : '',
+    settings.email ? `Email : ${settings.email}` : '',
+  ].filter(Boolean).join('  |  ')
+  if (contactLine) doc.text(contactLine, companyDetailsCenterX, 40, {
+    align: 'center',
+    maxWidth: 86,
+  })
 
   doc.setTextColor(...BLUE)
   doc.setFont('helvetica', 'bold')
@@ -301,7 +317,7 @@ async function createSalePdf(sale, settings = {}) {
     credit_note:'AVOIR',
   }[sale.doc_type] || 'DOCUMENT'
 
-  drawHeader(doc, { title, number:sale.number, date:sale.date_time, user:sale.created_by_name, settings, logo, arabicBrand, wordmark })
+  drawHeader(doc, { title, number:sale.number, date:sale.date_time, user:sale.created_by_name, settings, logo, arabicBrand, wordmark, hasArabicFont })
   drawInfoBox(doc, 14, 48, 87, 'Client', [
     partyName(sale.client_name, 'Client comptoir'),
     sale.client_phone ? `Telephone : ${sale.client_phone}` : '',
@@ -367,7 +383,7 @@ async function createPurchasePdf(purchase, settings = {}) {
   const logo = await imageData(getLogoUrl(settings))
   const wordmark = await imageData('/brand/library-sabri-wordmark.png')
   const arabicBrand = arabicBrandData()
-  drawHeader(doc, { title:'BON DE COMMANDE', number:purchase.number, date:purchase.date_time, user:purchase.created_by_name, settings, logo, arabicBrand, wordmark })
+  drawHeader(doc, { title:'BON DE COMMANDE', number:purchase.number, date:purchase.date_time, user:purchase.created_by_name, settings, logo, arabicBrand, wordmark, hasArabicFont })
   drawInfoBox(doc, 14, 48, 87, 'Fournisseur', [partyName(purchase.supplier_name, 'Fournisseur')])
   drawInfoBox(doc, 109, 48, 87, 'Commande', [
     `Livraison prévue : ${dateLabel(purchase.expected_date)}`,
