@@ -98,6 +98,7 @@ const labels = {
     itemsCount: 'Total articles',
     payment: 'Paiement',
     paid: 'Payé',
+    advance: 'Avance',
     remaining: 'Reste',
     currency: 'MAD',
     footer: 'Merci pour votre visite',
@@ -120,6 +121,7 @@ const labels = {
     itemsCount: 'مجموع المواد',
     payment: 'الدفع',
     paid: 'المدفوع',
+    advance: 'التسبيق',
     remaining: 'الباقي',
     currency: 'درهم',
     footer: 'شكرا على زيارتكم',
@@ -238,6 +240,8 @@ export default function ThermalReceipt({ sale, settings = {}, language = 'fr', c
         {vatEnabled && Number(sale.tax_amount || 0) > 0 ? <div><span>{t.tax}</span><b>{fmt(sale.tax_amount)} {currency}</b></div> : null}
         {discountAmount > 0 && <div><span>{t.discount}</span><b>{fmt(discountAmount)} {currency}</b></div>}
         <div className="thermal-grand"><span>{t.total}</span><b>{fmt(sale.total_amount)} {currency}</b></div>
+        {Number(sale.advance_amount || 0) > 0 && <div><span>{t.advance}</span><b>- {fmt(sale.advance_amount)} {currency}</b></div>}
+        {Number(sale.advance_amount || 0) > 0 && <div className="thermal-grand"><span>{t.remaining}</span><b>{fmt(remaining)} {currency}</b></div>}
         <div><span>{t.itemsCount}</span><b>{fmt(itemsCount, 0)}</b></div>
       </section>
 

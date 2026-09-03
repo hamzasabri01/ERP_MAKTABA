@@ -23,7 +23,10 @@ def document_paid_total(db: Session, document_type: str, document_id: int) -> De
         Payment.document_type == document_type,
         Payment.document_id == document_id,
     ).scalar()
-    return quantize_money(total or ZERO)
+    advance = ZERO
+    if document_type == "sale":
+        advance = db.query(Sale.advance_amount).filter(Sale.id == document_id).scalar() or ZERO
+    return quantize_money((total or ZERO) + advance)
 
 
 def sync_document_paid_amount(db: Session, document_type: str, document_id: int) -> Decimal:

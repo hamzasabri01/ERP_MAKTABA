@@ -136,7 +136,7 @@ def _cookie_samesite() -> str:
 
 
 def _set_session_cookies(response: Response, refresh_token: str, csrf_token: str) -> None:
-    max_age = env_int("REFRESH_TOKEN_EXPIRE_DAYS", 7) * 86400
+    max_age = env_int("REFRESH_TOKEN_EXPIRE_DAYS", 3650) * 86400
     response.set_cookie(
         REFRESH_COOKIE,
         refresh_token,

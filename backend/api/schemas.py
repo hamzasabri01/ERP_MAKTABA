@@ -556,6 +556,7 @@ class SaleCreate(BaseModel):
     discount: PercentageInput = Decimal("0")
     payment_mode: str = "Espèce"
     paid_amount: MoneyInput = Decimal("0")
+    advance_amount: MoneyInput = Decimal("0")
     items: List[SaleItemIn] = []
 
     @field_validator("doc_type")
@@ -613,6 +614,7 @@ class SaleOut(BaseModel):
     client_id: Optional[int] = None
     parent_id: Optional[int] = None
     client_name: str = ""
+    client_phone: str = ""
     date_time: Optional[datetime] = None
     due_date: Optional[datetime] = None
     notes: str = ""
@@ -621,6 +623,7 @@ class SaleOut(BaseModel):
     subtotal: float = 0.0
     tax_amount: float = 0.0
     total_amount: float = 0.0
+    advance_amount: float = 0.0
     paid_amount: float = 0.0
     balance_due: float = 0.0
     payment_mode: str = ""

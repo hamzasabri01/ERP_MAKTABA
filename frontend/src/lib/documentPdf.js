@@ -262,6 +262,21 @@ function addFooter(doc, settings) {
   }
 }
 
+function drawLibraryStampBox(doc, suggestedY) {
+  let y = suggestedY
+  if (y > 246) {
+    doc.addPage()
+    y = 52
+  }
+  doc.setDrawColor(...LINE)
+  doc.setLineWidth(.6)
+  doc.roundedRect(14, y, 72, 30, 2, 2, 'S')
+  doc.setTextColor(...MUTED)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.text('CACHET DE LA LIBRAIRIE', 50, y + 6, { align:'center' })
+}
+
 async function pdfTools() {
   const [{ jsPDF }, { autoTable }] = await Promise.all([
     import('jspdf'),
@@ -287,10 +302,13 @@ async function createSalePdf(sale, settings = {}) {
   }[sale.doc_type] || 'DOCUMENT'
 
   drawHeader(doc, { title, number:sale.number, date:sale.date_time, user:sale.created_by_name, settings, logo, arabicBrand, wordmark })
-  drawInfoBox(doc, 14, 48, 87, 'Client', [partyName(sale.client_name, 'Client comptoir')])
+  drawInfoBox(doc, 14, 48, 87, 'Client', [
+    partyName(sale.client_name, 'Client comptoir'),
+    sale.client_phone ? `Telephone : ${sale.client_phone}` : '',
+  ])
   drawInfoBox(doc, 109, 48, 87, 'Paiement', [
     `Mode : ${paymentModeLabel(sale.payment_mode)}`,
-    `Payé : ${money(sale.paid_amount, currency)}`,
+    `Avance : ${money(sale.advance_amount, currency)}`,
     `Reste : ${money(sale.balance_due, currency)}`,
   ])
 
@@ -307,6 +325,9 @@ async function createSalePdf(sale, settings = {}) {
     startY:80,
     head,
     body,
+    pageBreak:'auto',
+    rowPageBreak:'avoid',
+    showHead:'everyPage',
     theme:'plain',
     margin:{ left:14, right:14, bottom:28 },
     styles:{ font:'helvetica', fontSize:8, cellPadding:2.7, overflow:'linebreak', textColor:NAVY, lineColor:LINE, lineWidth:{ bottom:.15 } },
@@ -328,7 +349,11 @@ async function createSalePdf(sale, settings = {}) {
   const totals = [['Sous-total HT', sale.subtotal]]
   if (vat) totals.push(['TVA', sale.tax_amount])
   totals.push(['TOTAL', sale.total_amount])
-  drawTotals(doc, Math.max(doc.lastAutoTable.finalY + 10, 118), totals, currency, sale.notes)
+  if (Number(sale.advance_amount || 0) > 0) totals.push(['AVANCE', -Number(sale.advance_amount)])
+  totals.push(['RESTE À PAYER', sale.balance_due])
+  const totalsStartY = Math.max(doc.lastAutoTable.finalY + 10, 118)
+  const totalsEndY = drawTotals(doc, totalsStartY, totals, currency, sale.notes)
+  drawLibraryStampBox(doc, Math.max(totalsStartY + 20, totalsEndY + 8))
   addFooter(doc, settings)
   return doc
 }

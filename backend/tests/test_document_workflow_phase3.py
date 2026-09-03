@@ -167,6 +167,7 @@ class FinancialDocumentIntegrationTests(unittest.TestCase):
             line_total=40, total_amount=40,
         ))
         self.db.commit()
+        stock_before = self.db.get(Product, self.product.id).stock_quantity
 
         allocation = SimpleNamespace(document_number="FAC-1", allocation_id=1)
         with patch.object(sales, "reserve_document_number", return_value=allocation), \
@@ -180,6 +181,8 @@ class FinancialDocumentIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(first.id, replay.id)
+        self.assertEqual("confirmed", first.status)
+        self.assertEqual(stock_before - 2, self.db.get(Product, self.product.id).stock_quantity)
         self.assertEqual(1, self.db.query(Sale).filter(
             Sale.parent_id == quote.id,
             Sale.doc_type == "invoice",

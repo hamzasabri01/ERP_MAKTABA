@@ -1,5 +1,5 @@
 // src/pages/SalesPage.jsx
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useId } from 'react'
 import { createPortal } from 'react-dom'
 import { api, apiErrorMessage, fmt, fmtDate, fmtDateTime, isVatEnabled, operationHeaders, PAYMENT_METHODS, SETTLEMENT_METHODS, paymentModeLabel } from '../lib/api'
 import { Plus, Search, Edit2, Trash2, Check, X, CreditCard, Eye, ShoppingCart, Printer, Download, FileCheck2, Sparkles, RotateCcw, Mail, Send, CalendarDays, FileSpreadsheet } from 'lucide-react'
@@ -9,6 +9,7 @@ import { useConfirm } from '../components/ui/ConfirmDialog'
 import { getCompanyName, getLogoUrl } from '../lib/brand'
 import { downloadSalePdf, previewSalePdf } from '../lib/documentPdf'
 import { useI18n } from '../lib/i18n'
+import { storageJson, storageRemove, storageSet } from '../lib/safeStorage'
 import { printThermalReceipt, ThermalReceiptPrintDocument } from '../components/print/ThermalReceipt'
 import './SalesPrint.css'
 import './SalesPage.css'
@@ -28,9 +29,28 @@ const DOC_TITLES = {
 }
 
 const STATUS_LABELS = { draft:'Brouillon', confirmed:'Confirmé', partially_paid:'Partiellement payé', paid:'Payé', cancelled:'Annulé' }
-const EMPTY_SALE = { doc_type:'invoice', client_id:'', date_time:'', notes:'', discount:0, payment_mode:'cash', paid_amount:0, items:[] }
+const EMPTY_SALE = { doc_type:'invoice', client_id:'', date_time:'', notes:'', discount:0, payment_mode:'cash', paid_amount:0, advance_amount:0, items:[] }
 const EMPTY_ITEM = { product_id:'', description:'', quantity:1, unit_price:0, purchase_price:0, discount:0, tax_rate:20, sale_unit:'' }
 const PAGE_SIZE = 80
+const SALES_DRAFT_KEY = 'maktaba_sales_document_draft_v1'
+
+function readSalesDraft() {
+  const saved = storageJson(SALES_DRAFT_KEY)
+  if (saved?.version !== 1 || !saved.form || !Array.isArray(saved.form.items)) return null
+  return {
+    ...EMPTY_SALE,
+    ...saved.form,
+    items: saved.form.items.length ? saved.form.items : [{ ...EMPTY_ITEM }],
+  }
+}
+
+function writeSalesDraft(form) {
+  storageSet(SALES_DRAFT_KEY, JSON.stringify({
+    version: 1,
+    saved_at: new Date().toISOString(),
+    form,
+  }))
+}
 
 const localIsoDate = value => {
   const year = value.getFullYear()
@@ -65,7 +85,8 @@ function buildSalePayload(form) {
     due_date: form.due_date || null,
     discount: form.discount || 0,
     paid_amount: 0,
-    items: (form.items || []).map(item => ({
+    advance_amount: Number(form.advance_amount || 0),
+    items: (form.items || []).filter(item => item.product_id).map(item => ({
       ...item,
       product_id: item.product_id || null,
       quantity: item.quantity,
@@ -75,6 +96,42 @@ function buildSalePayload(form) {
       tax_rate: item.tax_rate ?? 0,
     })),
   }
+}
+
+function ProductSearchSelect({ products, value, onChange }) {
+  const selectedProduct = products.find(product => product.id === Number(value))
+  const [query, setQuery] = useState(selectedProduct?.name || '')
+  const listId = useId()
+
+  useEffect(() => {
+    if (selectedProduct) setQuery(selectedProduct.name)
+  }, [selectedProduct?.name])
+
+  return (
+    <div className="sales-product-search">
+      <Search size={16} aria-hidden="true" />
+      <input
+        type="search"
+        aria-label="Rechercher et sélectionner un produit"
+        list={listId}
+        placeholder="Rechercher un produit…"
+        value={query}
+        onChange={event => {
+          const nextQuery = event.target.value
+          setQuery(nextQuery)
+          const match = products.find(product => product.name?.toLocaleLowerCase() === nextQuery.trim().toLocaleLowerCase())
+          if (match) {
+            const accepted = onChange(String(match.id))
+            if (accepted === false) setQuery('')
+          }
+          else if (value) onChange('')
+        }}
+      />
+      <datalist id={listId}>
+        {products.map(product => <option key={product.id} value={product.name}>{product.barcode || ''}</option>)}
+      </datalist>
+    </div>
+  )
 }
 
 export default function SalesPage() {
@@ -219,9 +276,11 @@ export default function SalesPage() {
   }, [])
 
   const openCreate = () => {
-    setForm({ ...EMPTY_SALE, doc_type: docType, items: [{ ...EMPTY_ITEM }] })
+    const savedDraft = readSalesDraft()
+    setForm(savedDraft || { ...EMPTY_SALE, doc_type: docType, items: [{ ...EMPTY_ITEM }] })
     setServerPreview(null)
     setSelected(null); setModal('form')
+    if (savedDraft) toast.success('Brouillon récupéré automatiquement')
   }
   const openEdit = async (summary) => {
     try {
@@ -250,6 +309,7 @@ export default function SalesPage() {
         discount: sale.discount,
         payment_mode: sale.payment_mode,
         paid_amount: sale.paid_amount,
+        advance_amount: sale.advance_amount || 0,
         items: items.length ? items : [{ ...EMPTY_ITEM }],
       })
       setServerPreview(null)
@@ -517,10 +577,21 @@ export default function SalesPage() {
           pricing_mode: undefined,
         } : item),
       }))
-      return
+      return true
+    }
+    const duplicateIndex = form.items.findIndex((item, itemIndex) => itemIndex !== index && Number(item.product_id) === Number(value))
+    if (duplicateIndex >= 0) {
+      toast.error(`Ce produit existe déjà à la ligne ${duplicateIndex + 1}. Augmentez sa quantité.`)
+      window.requestAnimationFrame(() => {
+        const input = document.querySelector(`[data-sales-quantity="${duplicateIndex}"]`)
+        input?.scrollIntoView({ behavior:'smooth', block:'center' })
+        input?.focus()
+        input?.select()
+      })
+      return false
     }
     const product = products.find(item => item.id === Number(value))
-    if (!product) return
+    if (!product) return false
     if (product.product_type === 'service') {
       setServiceLineDraft({
         index,
@@ -528,9 +599,26 @@ export default function SalesPage() {
         quantity: 1,
         unit_price: '',
       })
-      return
+      return true
     }
-    updateItem(index, 'product_id', value)
+    setForm(current => {
+      const items = [...current.items]
+      const currentItem = { ...items[index], product_id:value }
+      currentItem.unit_price = product.sale_price
+      currentItem.purchase_price = product.purchase_price
+      currentItem.tax_rate = vatEnabled ? product.tax_rate : 0
+      currentItem.description = product.name
+      currentItem.sale_unit = product.unit || 'pcs'
+      currentItem.base_unit = product.unit || 'pcs'
+      currentItem.secondary_unit = product.sale_unit || ''
+      currentItem.secondary_factor = Number(product.sale_to_base_factor || 1)
+      currentItem.secondary_price = Number(product.sale_unit_price || 0)
+      currentItem.base_price = Number(product.sale_price || 0)
+      items[index] = currentItem
+      if (index === items.length - 1) items.push({ ...EMPTY_ITEM })
+      return { ...current, items }
+    })
+    return true
   }
 
   const selectLineUnit = (index, value) => setForm(current => ({
@@ -550,9 +638,8 @@ export default function SalesPage() {
     if (!Number.isInteger(quantity) || quantity <= 0) return toast.error('La quantité doit être un nombre entier positif')
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) return toast.error('Saisissez un prix par pcs strictement positif')
     const { index, product } = serviceLineDraft
-    setForm(current => ({
-      ...current,
-      items: current.items.map((item, itemIndex) => itemIndex === index ? {
+    setForm(current => {
+      const items = current.items.map((item, itemIndex) => itemIndex === index ? {
         ...item,
         product_id: product.id,
         description: product.name,
@@ -562,8 +649,10 @@ export default function SalesPage() {
         tax_rate: vatEnabled ? product.tax_rate : 0,
         product_type: 'service',
         pricing_mode: product.pricing_mode,
-      } : item),
-    }))
+      } : item)
+      if (index === items.length - 1) items.push({ ...EMPTY_ITEM })
+      return { ...current, items }
+    })
     setServiceLineDraft(null)
   }
 
@@ -585,6 +674,10 @@ export default function SalesPage() {
   const previewPayload = useMemo(() => buildSalePayload(form), [form])
 
   useEffect(() => {
+    if (modal === 'form' && !selected) writeSalesDraft(form)
+  }, [form, modal, selected])
+
+  useEffect(() => {
     if (modal !== 'form' || !previewPayload.items.length) {
       setServerPreview(null)
       return undefined
@@ -601,10 +694,10 @@ export default function SalesPage() {
   }, [modal, previewPayload])
 
   const handleSave = async () => {
-    if ((form.items||[]).length === 0) return toast.error('Ajoutez au moins une ligne')
-    const invalidLine = form.items.findIndex(item =>
-      !item.product_id
-      || !Number.isInteger(Number(item.quantity))
+    const completedItems = (form.items || []).filter(item => item.product_id)
+    if (completedItems.length === 0) return toast.error('Ajoutez au moins une ligne')
+    const invalidLine = completedItems.findIndex(item =>
+      !Number.isInteger(Number(item.quantity))
       || Number(item.quantity) <= 0
       || !Number.isFinite(Number(item.unit_price))
       || Number(item.unit_price) <= 0
@@ -619,6 +712,7 @@ export default function SalesPage() {
       setServerPreview(exact)
       if (!selected) { await api.post('/sales', payload); toast.success('Document créé') }
       else { await api.put(`/sales/${selected.id}`, payload, { headers: operationHeaders(selected.version, { idempotent: false }) }); toast.success('Document mis à jour') }
+      if (!selected) storageRemove(SALES_DRAFT_KEY)
       setModal(null); load()
     } catch(e) { toast.error(apiErrorMessage(e, 'Erreur')) }
     finally { setSaving(false) }
@@ -700,7 +794,6 @@ export default function SalesPage() {
                       </button>
                       {s.status === 'draft' && <>
                         <button className="btn btn-secondary btn-sm btn-icon" onClick={() => openEdit(s)} title="Modifier"><Edit2 size={14}/></button>
-                        {s.doc_type === 'quote' && <button className="btn btn-primary btn-sm btn-icon" onClick={() => handleConvertQuote(s)} title="Convertir en facture"><FileCheck2 size={14}/></button>}
                         <button className="btn btn-success btn-sm btn-icon" onClick={() => handleConfirm(s)} title="Confirmer"><Check size={14}/></button>
                         <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleDelete(s)} title="Supprimer"><Trash2 size={14}/></button>
                       </>}
@@ -708,6 +801,7 @@ export default function SalesPage() {
                         <button className="btn btn-primary btn-sm btn-icon" onClick={() => { setSelected(s); setPayAmt(s.balance_due); setModal('pay') }} title="Paiement"><CreditCard size={14}/></button>
                         <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleCancel(s)} title="Annuler"><X size={14}/></button>
                       </>}
+                      {s.doc_type === 'quote' && s.status !== 'cancelled' && <button className="btn btn-primary btn-sm btn-icon" onClick={() => handleConvertQuote(s)} title="Convertir en facture et déduire le stock"><FileCheck2 size={14}/></button>}
                     </div>
                   </td>
                 </tr>
@@ -812,8 +906,8 @@ export default function SalesPage() {
                   <input type="number" min="0" max="100" value={form.discount||0} onChange={e => setForm(f=>({...f,discount:+e.target.value||0}))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Paiement</label>
-                  <div className="text-muted text-sm">Disponible après confirmation du document.</div>
+                  <label className="form-label">Avance client</label>
+                  <input type="number" min="0" step="0.01" value={form.advance_amount || 0} onChange={e => setForm(f => ({ ...f, advance_amount:Math.max(0, Number(e.target.value) || 0) }))} />
                 </div>
                 <div className="form-group" style={{ gridColumn:'1/-1' }}>
                   <label className="form-label">Notes</label>
@@ -824,7 +918,7 @@ export default function SalesPage() {
               {/* Items */}
               <div className="sales-lines-section">
                 <div className="sales-lines-heading">
-                  <h3>Lignes</h3>
+                  <div><h3>Lignes</h3>{!selected ? <span className="sales-autosave-status"><Check size={12}/> Brouillon sauvegardé automatiquement</span> : null}</div>
                   <button className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14}/> Ajouter ligne</button>
                 </div>
                 <div className="sales-lines-table-wrap">
@@ -845,10 +939,7 @@ export default function SalesPage() {
                         return (
                           <tr key={i}>
                             <td className="sales-line-product">
-                              <select value={item.product_id||''} onChange={e => selectLineProduct(i, e.target.value)}>
-                                <option value="">— Produit —</option>
-                                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                              </select>
+                              <ProductSearchSelect products={products} value={item.product_id || ''} onChange={value => selectLineProduct(i, value)} />
                             </td>
                             <td>
                               <select aria-label="Unité de vente" value={item.sale_unit || item.base_unit || ''} disabled={!item.product_id || !item.secondary_unit} onChange={event => selectLineUnit(i, event.target.value)}>
@@ -859,6 +950,7 @@ export default function SalesPage() {
                               </select>
                             </td>
                             <td className="sales-line-quantity"><input
+                              data-sales-quantity={i}
                               aria-label="Quantité"
                               type="number"
                               inputMode="numeric"
@@ -902,6 +994,8 @@ export default function SalesPage() {
                   <div style={{ display:'flex', justifyContent:'space-between', fontWeight:700, fontSize:'1.1rem', borderTop:'1px solid var(--border)', paddingTop:'.4rem', marginTop:'.2rem' }}>
                     <span>Total:</span><span style={{ color:'var(--accent)' }}>{fmt(totals.total)} {currency}</span>
                   </div>
+                  <div style={{ display:'flex', justifyContent:'space-between', color:'var(--success)', fontWeight:700 }}><span>Avance:</span><span>- {fmt(form.advance_amount)} {currency}</span></div>
+                  <div style={{ display:'flex', justifyContent:'space-between', color:'var(--danger)', fontWeight:800, fontSize:'1rem' }}><span>Reste à payer:</span><span>{fmt(Math.max(totals.total - Number(form.advance_amount || 0), 0))} {currency}</span></div>
                   <small className="text-muted">{serverPreview ? 'Total exact calculé par le serveur' : 'Vérification du total en cours…'}</small>
                 </div>
               </div>
@@ -1010,6 +1104,7 @@ export default function SalesPage() {
                   <div style={{ display:'flex', justifyContent:'space-between', fontWeight:700, fontSize:'1.1rem', borderTop:'1px solid var(--border)', paddingTop:'.4rem' }}>
                     <span>Total TTC:</span><span style={{ color:'var(--accent)' }}>{fmt(selected.total_amount)} MAD</span>
                   </div>
+                  {Number(selected.advance_amount || 0) > 0 && <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}><span style={{ color:'var(--success)' }}>Avance:</span><span style={{ color:'var(--success)' }}>{fmt(selected.advance_amount)} MAD</span></div>}
                   <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem' }}><span style={{ color:'var(--success)' }}>Payé:</span><span style={{ color:'var(--success)' }}>{fmt(selected.paid_amount)} MAD</span></div>
                   {selected.balance_due > 0 && (
                     <div style={{ display:'flex', justifyContent:'space-between', fontSize:'.875rem', fontWeight:600 }}><span style={{ color:'var(--danger)' }}>Reste:</span><span style={{ color:'var(--danger)' }}>{fmt(selected.balance_due)} MAD</span></div>
@@ -1252,15 +1347,15 @@ function buildSalesDocumentHtml(sale, settings) {
 <style>${documentPrintCss()}</style></head>
 <body><main class="sheet">
   <header><div class="brand"><img src="${escapeHtml(logoUrl)}" alt=""><div><strong>${escapeHtml(getCompanyName(settings))}</strong><span>${escapeHtml(settings.address || '')}</span><span>${escapeHtml(settings.phone || '')}</span></div></div><div class="meta"><h1>${escapeHtml(title)}</h1><b>${escapeHtml(sale.number)}</b><span>Date: ${fmtDate(sale.date_time)}</span><span>Utilisateur: ${escapeHtml(sale.created_by_name || '-')}</span></div></header>
-  <section class="parties"><div><h2>Client</h2><b>${escapeHtml(sale.client_name || 'Client comptoir')}</b></div><div><h2>Paiement</h2><span>Mode: ${escapeHtml(paymentModeLabel(sale.payment_mode))}</span><span>Paye: ${fmt(sale.paid_amount)} ${currency}</span><span>Reste: ${fmt(sale.balance_due)} ${currency}</span></div></section>
+  <section class="parties"><div><h2>Client</h2><b>${escapeHtml(sale.client_name || 'Client comptoir')}</b><span>Telephone: ${escapeHtml(sale.client_phone || '-')}</span></div><div><h2>Paiement</h2><span>Mode: ${escapeHtml(paymentModeLabel(sale.payment_mode))}</span><span>Avance: ${fmt(sale.advance_amount)} ${currency}</span><span>Reste: ${fmt(sale.balance_due)} ${currency}</span></div></section>
   <table><thead><tr><th>Designation</th><th>Qte</th><th>PU</th><th>Remise</th>${vatEnabled ? '<th>TVA</th>' : ''}<th>Total</th></tr></thead><tbody>${rows}</tbody></table>
-  <section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(sale.notes || settings.invoice_notes || 'Merci pour votre confiance.')}</p></div><aside><p><span>Sous-total</span><b>${fmt(sale.subtotal)} ${currency}</b></p>${vatEnabled ? `<p><span>TVA</span><b>${fmt(sale.tax_amount)} ${currency}</b></p>` : ''}<p class="total"><span>Total</span><b>${fmt(sale.total_amount)} ${currency}</b></p></aside></section>
+  <section class="bottom"><div><h2>Notes</h2><p>${escapeHtml(sale.notes || settings.invoice_notes || 'Merci pour votre confiance.')}</p><div class="library-stamp">CACHET DE LA LIBRAIRIE</div></div><aside><p><span>Sous-total</span><b>${fmt(sale.subtotal)} ${currency}</b></p>${vatEnabled ? `<p><span>TVA</span><b>${fmt(sale.tax_amount)} ${currency}</b></p>` : ''}<p><span>Total</span><b>${fmt(sale.total_amount)} ${currency}</b></p><p><span>Avance</span><b>- ${fmt(sale.advance_amount)} ${currency}</b></p><p class="total"><span>Reste a payer</span><b>${fmt(sale.balance_due)} ${currency}</b></p></aside></section>
   <footer>${escapeHtml(getCompanyName(settings))} - Document genere par ${escapeHtml(sale.created_by_name || 'LIBRARY SABRI')}</footer>
 </main></body></html>`
 }
 
 function documentPrintCss() {
-  return `body{margin:0;background:#f1f5f9;color:#111827;font-family:Arial,Helvetica,sans-serif}.sheet{width:210mm;min-height:297mm;margin:0 auto;background:#fff;padding:16mm}header,.parties,.bottom,aside p,footer{display:flex;justify-content:space-between;gap:16px}header{border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:18px}.brand{display:flex;gap:12px;align-items:flex-start}.brand img{width:42px;height:42px;object-fit:contain}.brand strong{display:block;font-size:24px}.brand span,.meta span{display:block;color:#4b5563;font-size:12px}.meta{text-align:right}.meta h1{margin:0;text-transform:uppercase;font-size:28px}.parties{margin-bottom:18px}.parties>div{width:48%;border:1px solid #d1d5db;padding:10px;min-height:82px}h2{font-size:12px;text-transform:uppercase;color:#6b7280;margin:0 0 6px}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#111827;color:#fff;text-align:left;padding:8px}td{padding:8px;border-bottom:1px solid #e5e7eb}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.bottom>div{width:52%;color:#4b5563}aside{width:270px}aside p{border-bottom:1px solid #e5e7eb;padding-bottom:6px}.total{background:#111827;color:#fff;padding:10px!important;border-bottom:0!important}footer{margin-top:28px;border-top:1px solid #e5e7eb;padding-top:8px;color:#6b7280;font-size:10px}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}@page{size:A4;margin:0}}`
+  return `body{margin:0;background:#f1f5f9;color:#111827;font-family:Arial,Helvetica,sans-serif}.sheet{width:210mm;min-height:297mm;margin:0 auto;background:#fff;padding:16mm}header,.parties,.bottom,aside p,footer{display:flex;justify-content:space-between;gap:16px}header{border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:18px}.brand{display:flex;gap:12px;align-items:flex-start}.brand img{width:42px;height:42px;object-fit:contain}.brand strong{display:block;font-size:24px}.brand span,.meta span,.parties span{display:block;color:#4b5563;font-size:12px;margin-top:4px}.meta{text-align:right}.meta h1{margin:0;text-transform:uppercase;font-size:28px}.parties{margin-bottom:18px}.parties>div{width:48%;border:1px solid #d1d5db;padding:10px;min-height:82px}h2{font-size:12px;text-transform:uppercase;color:#6b7280;margin:0 0 6px}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#111827;color:#fff;text-align:left;padding:8px}td{padding:8px;border-bottom:1px solid #e5e7eb}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.bottom>div{width:52%;color:#4b5563}.library-stamp{width:72mm;height:30mm;margin-top:12mm;border:1px solid #94a3b8;border-radius:3px;text-align:center;padding-top:6px;font-size:10px;font-weight:bold}aside{width:270px}aside p{border-bottom:1px solid #e5e7eb;padding-bottom:6px}.total{background:#111827;color:#fff;padding:10px!important;border-bottom:0!important}footer{margin-top:28px;border-top:1px solid #e5e7eb;padding-top:8px;color:#6b7280;font-size:10px}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}@page{size:A4;margin:0}}`
 }
 
 function PrintableSalesDocument({ sale, settings }) {
@@ -1304,11 +1399,12 @@ function PrintableSalesDocument({ sale, settings }) {
           <div>
             <h2>Client</h2>
             <strong>{clientLabel}</strong>
+            <span>Téléphone: {sale.client_phone || '-'}</span>
           </div>
           <div>
             <h2>Paiement</h2>
             <span>Mode: {paymentModeLabel(sale.payment_mode)}</span>
-            <span>Payé: {fmt(sale.paid_amount)} {currency}</span>
+            <span>Avance: {fmt(sale.advance_amount)} {currency}</span>
             <span>Reste: {fmt(amountDue)} {currency}</span>
           </div>
         </section>
@@ -1342,6 +1438,7 @@ function PrintableSalesDocument({ sale, settings }) {
           <div className="print-notes">
             <h2>Notes</h2>
             <p>{sale.notes || 'Merci pour votre confiance.'}</p>
+            <div className="print-library-stamp">CACHET DE LA LIBRAIRIE</div>
           </div>
           <div className="print-totals">
             <div><span>Sous-total HT</span><strong>{fmt(sale.subtotal)} {currency}</strong></div>
@@ -1350,6 +1447,8 @@ function PrintableSalesDocument({ sale, settings }) {
               <div><span>Remise globale</span><strong>{fmt(sale.discount)}%</strong></div>
             )}
             <div className="print-grand-total"><span>Total</span><strong>{fmt(sale.total_amount)} {currency}</strong></div>
+            <div><span>Avance</span><strong>- {fmt(sale.advance_amount)} {currency}</strong></div>
+            <div className="print-grand-total"><span>Reste à payer</span><strong>{fmt(amountDue)} {currency}</strong></div>
           </div>
         </section>
 

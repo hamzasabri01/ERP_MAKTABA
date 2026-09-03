@@ -181,7 +181,7 @@ export default function PrayerTimesWidget({ language = 'fr' }) {
     <div className="prayer-widget" ref={rootRef}>
       <audio
         ref={audioRef}
-        src="/audio/adhan.ogg"
+        src="/audio/adhan-abdelmajid-assarihi.mp3"
         preload="auto"
         onCanPlayThrough={() => { setAudioReady(true); setAudioError(false) }}
         onEnded={stopAdhan}

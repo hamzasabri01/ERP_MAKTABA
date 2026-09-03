@@ -30,6 +30,8 @@ from services.document_workflow import (
     OPEN_SALE_STATUSES,
     SALE_CANCELLED,
     SALE_CONFIRMED,
+    SALE_PAID,
+    SALE_PARTIALLY_PAID,
     assert_transition,
     claim_idempotency,
     claim_version,
@@ -139,6 +141,7 @@ def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
         client_id=s.client_id,
         parent_id=s.parent_id,
         client_name=s.client.name if s.client else "—",
+        client_phone=s.client.phone if s.client else "",
         date_time=s.date_time,
         due_date=s.due_date,
         notes=s.notes or "",
@@ -147,6 +150,7 @@ def _to_sale_out(s: Sale, include_items: bool = True) -> SaleOut:
         subtotal=s.subtotal or 0,
         tax_amount=s.tax_amount or 0,
         total_amount=s.total_amount or 0,
+        advance_amount=s.advance_amount or 0,
         paid_amount=s.paid_amount or 0,
         balance_due=s.balance_due,
         payment_mode=s.payment_mode or "",
@@ -558,10 +562,16 @@ def convert_quote_to_invoice(
             if client:
                 due_date = conversion_date + timedelta(days=client.payment_terms or 0)
 
+        transferred_paid = min(money(source.paid_amount or 0), money(source.total_amount or 0))
+        invoice_status = (
+            SALE_PAID if transferred_paid >= money(source.total_amount or 0)
+            else SALE_PARTIALLY_PAID if transferred_paid > 0
+            else SALE_CONFIRMED
+        )
         invoice = Sale(
             number=allocation.document_number,
             doc_type="invoice",
-            status="draft",
+            status=invoice_status,
             client_id=source.client_id,
             date_time=conversion_date,
             due_date=due_date,
@@ -571,7 +581,8 @@ def convert_quote_to_invoice(
             subtotal=source.subtotal or 0,
             tax_amount=source.tax_amount or 0,
             total_amount=source.total_amount or 0,
-            paid_amount=0,
+            advance_amount=source.advance_amount or 0,
+            paid_amount=transferred_paid,
             payment_mode=source.payment_mode or "Espece",
             created_by=user.id,
             parent_id=source.id,
@@ -585,7 +596,7 @@ def convert_quote_to_invoice(
         db.flush()
 
         for item in source.items:
-            db.add(SaleItem(
+            invoice_item = SaleItem(
                 sale_id=invoice.id,
                 product_id=item.product_id,
                 description=item.description or "",
@@ -604,9 +615,37 @@ def convert_quote_to_invoice(
                 tax_amount=item.tax_amount or 0,
                 total_amount=item.total_amount or item.line_total or 0,
                 line_total=item.line_total or 0,
-            ))
+            )
+            db.add(invoice_item)
+            db.flush()
+            for product, quantity, key_suffix in _stock_targets(invoice_item):
+                apply_stock_movement(
+                    db, product, "out", quantity,
+                    operation_key=f"sale:{invoice.id}:convert-confirm:{key_suffix}",
+                    user_id=user.id,
+                    unit_cost=product.purchase_price or 0,
+                    reference=invoice.number,
+                    notes=f"Mouvement stock conversion du devis {source.number}",
+                    source_type="sale", source_id=invoice.id, source_line_id=invoice_item.id,
+                )
+
+        # Payments already collected on the quote belong to the resulting invoice.
+        # Moving their journal link avoids counting cash twice and keeps reversals valid.
+        db.query(Payment).filter(
+            Payment.document_type == "sale",
+            Payment.document_id == source.id,
+        ).update({Payment.document_id: invoice.id}, synchronize_session=False)
+        source.paid_amount = 0
+        source.advance_amount = 0
+        if source.status in (SALE_PAID, SALE_PARTIALLY_PAID):
+            source.status = SALE_CONFIRMED
 
         source.updated_at = datetime.utcnow()
+        log_action(
+            db, user, "convert", "sale", source.id,
+            f"Devis {source.number} converti en facture {invoice.number}",
+            after={"invoice_id": invoice.id, "invoice_number": invoice.number, "stock_deducted": True, "paid_amount_transferred": str(transferred_paid)},
+        )
         commit_number_allocation(db, allocation.allocation_id, invoice.id)
         db.commit()
     except Exception as exc:
@@ -625,8 +664,13 @@ def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(ge
         Client.is_active.is_(True),
     ).first():
         raise HTTPException(400, "Le client sélectionné est introuvable ou archivé")
+    product_ids = [item.product_id for item in body.items if item.product_id]
+    if len(product_ids) != len(set(product_ids)):
+        raise HTTPException(400, "Un produit ne peut apparaitre qu'une seule fois; augmentez sa quantite")
     items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
+    if money(body.advance_amount) > money(calculation["total_amount"]):
+        raise HTTPException(400, "L'avance ne peut pas depasser le total du document")
     document_date = body.date_time or datetime.now()
     allocation = reserve_document_number(
         db, "sale", body.doc_type, document_date=document_date, created_by=user.id,
@@ -647,7 +691,8 @@ def create_sale(body: SaleCreate, db: Session = Depends(get_db), user=Depends(ge
             notes=body.notes,
             discount=body.discount,
             payment_mode=body.payment_mode,
-            paid_amount=0,
+            advance_amount=body.advance_amount,
+            paid_amount=body.advance_amount,
             created_by=user.id,
             updated_at=datetime.utcnow(),
             **_document_values(calculation),
@@ -722,11 +767,17 @@ def update_sale(
     ).first():
         raise HTTPException(400, "Le client sélectionné est introuvable ou archivé")
     s.version = claim_version(db, Sale, s.id, if_match)
+    product_ids = [item.product_id for item in body.items if item.product_id]
+    if len(product_ids) != len(set(product_ids)):
+        raise HTTPException(400, "Un produit ne peut apparaitre qu'une seule fois; augmentez sa quantite")
     items_data, price_overrides = resolve_sale_items(db, user, [i.model_dump() for i in body.items])
     calculation = _compute_sale(items_data, body.discount)
-    for k, v in {**body.model_dump(exclude={"items"}), **_document_values(calculation)}.items():
+    if money(body.advance_amount) > money(calculation["total_amount"]):
+        raise HTTPException(400, "L'avance ne peut pas depasser le total du document")
+    for k, v in {**body.model_dump(exclude={"items", "paid_amount"}), **_document_values(calculation)}.items():
         if hasattr(s, k):
             setattr(s, k, v)
+    s.paid_amount = body.advance_amount
     s.updated_at = datetime.utcnow()
     log_action(db, user, "update", "sale", s.id, f"Document vente modifie: {s.number}", after=model_snapshot(s, ["number", "doc_type", "status", "client_id", "total_amount", "paid_amount"]))
     # Replace items
@@ -816,7 +867,11 @@ def confirm_sale(
                 )
 
     s.version = claim_version(db, Sale, s.id, if_match)
-    s.status = SALE_CONFIRMED
+    s.status = (
+        SALE_PAID if money(s.paid_amount) >= money(s.total_amount)
+        else SALE_PARTIALLY_PAID if money(s.paid_amount) > 0
+        else SALE_CONFIRMED
+    )
     s.updated_at = datetime.utcnow()
     if s.client_id:
         client = db.query(Client).filter(Client.id == s.client_id).first()

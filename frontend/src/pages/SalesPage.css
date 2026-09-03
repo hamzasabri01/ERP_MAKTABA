@@ -76,6 +76,16 @@
   font-weight: 800;
 }
 
+.sales-autosave-status {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  margin-top: .3rem;
+  color: var(--success);
+  font-size: .7rem;
+  font-weight: 700;
+}
+
 .sales-lines-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);
@@ -128,6 +138,29 @@
 }
 
 .sales-line-product select {
+  font-weight: 650;
+}
+
+.sales-line-product {
+  position: relative;
+}
+
+.sales-product-search {
+  position: relative;
+}
+
+.sales-product-search > svg {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: .75rem;
+  top: 50%;
+  color: var(--text3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.sales-product-search input {
+  padding-inline-start: 2.25rem;
   font-weight: 650;
 }
 

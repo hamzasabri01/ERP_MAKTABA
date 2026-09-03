@@ -2,3 +2,8 @@ Beautiful adhan.ogg
 Source: https://commons.wikimedia.org/wiki/File:Beautiful_adhan.ogg
 License: CC0 1.0 Universal (public domain dedication)
 Local filename: adhan.ogg
+
+Abdelmajid Assarihi adhan
+Source: https://archive.org/download/athan-nasTv/athan-nasTv.mp3
+Referenced by: https://www.dailymotion.com/video/xleq09
+Local filename: adhan-abdelmajid-assarihi.mp3

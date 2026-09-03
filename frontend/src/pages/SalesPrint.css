@@ -138,6 +138,19 @@
   gap: 6px;
 }
 
+.print-library-stamp {
+  width: 72mm;
+  height: 30mm;
+  margin-top: 12mm;
+  padding-top: 6px;
+  border: 1px solid #94a3b8;
+  border-radius: 3px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .print-totals {
   width: 270px;
   gap: 8px;

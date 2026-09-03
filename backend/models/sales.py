@@ -26,6 +26,7 @@ class Sale(Base):
     subtotal     = Column(Numeric(18, 2), default=0)
     tax_amount   = Column(Numeric(18, 2), default=0)
     total_amount = Column(Numeric(18, 2), default=0)
+    advance_amount = Column(Numeric(18, 2), nullable=False, default=0)
     paid_amount  = Column(Numeric(18, 2), default=0)
     payment_mode = Column(String(30), default="Espèce")
     created_by   = Column(Integer, ForeignKey("users.id"))

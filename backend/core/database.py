@@ -107,6 +107,7 @@ def _migrate_schema():
         "sales": [
             ("updated_at", "DATETIME"), ("version", "INTEGER NOT NULL DEFAULT 1"),
             ("discount_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
+            ("advance_amount", "NUMERIC(18,2) NOT NULL DEFAULT 0"),
             ("currency_code", "VARCHAR(3) NOT NULL DEFAULT 'MAD'"),
             ("price_tax_mode", "VARCHAR(10) NOT NULL DEFAULT 'exclusive'"),
             ("rounding_scope", "VARCHAR(10) NOT NULL DEFAULT 'line'"),

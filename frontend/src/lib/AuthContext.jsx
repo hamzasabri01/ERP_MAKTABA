@@ -119,6 +119,26 @@ export function AuthProvider({ children }) {
     }
   }, [clearSession])
 
+  // Keep an open workstation signed in. Refresh tokens are rotated before the
+  // short-lived access token expires, so normal use never jumps back to login.
+  useEffect(() => {
+    if (!user) return undefined
+    const renew = () => refreshSession({ silent: true })
+      .then(data => data?.user && setUser(data.user))
+      .catch(() => {})
+    const timer = window.setInterval(renew, 10 * 60 * 1000)
+    const renewWhenActive = () => {
+      if (document.visibilityState === 'visible') renew()
+    }
+    window.addEventListener('online', renew)
+    document.addEventListener('visibilitychange', renewWhenActive)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('online', renew)
+      document.removeEventListener('visibilitychange', renewWhenActive)
+    }
+  }, [user?.id])
+
   const hasPermission = useCallback(permission => {
     const permissions = user?.permissions || []
     return permissions.includes('all') || permissions.includes(permission)
