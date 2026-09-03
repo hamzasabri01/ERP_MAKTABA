@@ -2,9 +2,9 @@
 setlocal
 cd /d "%~dp0"
 echo Mise a jour depuis GitHub sans toucher a la base locale...
-where powershell.exe >nul 2>nul
-if not errorlevel 1 (
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0update-existing.ps1"
+set "WINDOWS_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if exist "%WINDOWS_POWERSHELL%" (
+  "%WINDOWS_POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0update-existing.ps1"
 ) else (
   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0update-existing.ps1"
 )
